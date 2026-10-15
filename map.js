@@ -150,8 +150,7 @@
     placeModel(rec, slot.i);
     birthIdx = slot.i; birthT = 0;
     selIdx = slot.i; syncSel();
-    refresh();
-    feedEvent(`classify ▸ ${m.id}`, `${RN[cls - 1]} · ${unsafe ? 'RESTRICTED' : 'ATTESTED'}`, unsafe ? 'deny' : 'allow');
+    refresh(); openInspector(slot.i);
     cxIn.value = ''; cxIn.placeholder = `${m.id.split('/')[1]} → CLASS ${RN[cls - 1]}${unsafe ? ' · RESTRICTED' : ''}`;
     cxIn.disabled = false;
   }
@@ -168,52 +167,6 @@
       } catch { }
     }, 250);
   });
-
-  /* ============ POLICY ENGINE (ported from hellovims/4c) ============ */
-  const TOOL_RISK = {
-    'math.calc': 1, 'text.format': 1, 'json.parse': 1,
-    'fs.read': 2, 'http.get': 2, 'http.head': 2, 'db.query': 2, 'search.query': 2,
-    'fs.write': 3, 'fs.delete': 3, 'fs.move': 3, 'db.insert': 3, 'db.update': 3,
-    'db.delete': 3, 'config.set': 3,
-    'http.post': 4, 'http.put': 4, 'http.delete': 4, 'email.send': 4,
-    'deploy.run': 4, 'payment.send': 4, 'social.post': 4, 'message.send': 4,
-    'webhook.call': 4,
-    'shell.exec': 5, 'code.eval': 5, 'code.compile': 5, 'process.spawn': 5,
-    'socket.raw': 5, 'fs.chmod': 5, 'fs.chown': 5,
-  };
-  const AGENT_DECL = {
-    declared: new Set(['math.calc', 'json.parse', 'fs.read', 'fs.write', 'db.query',
-      'db.insert', 'http.get', 'http.post', 'search.query', 'email.send',
-      'payment.send', 'deploy.run', 'shell.exec', 'config.set']),
-    egress: new Set(['api.github.com', 'api.stripe.com', 'smtp.relay.internal']),
-  };
-  const CALL_POOL = [
-    ['fs.read', '/etc/hosts'], ['fs.read', './src/auth.go'], ['db.query', 'SELECT * FROM users LIMIT 50'],
-    ['math.calc', 'sum(invoice)'], ['json.parse', 'webhook payload'], ['search.query', '"4c protocol"'],
-    ['fs.write', './out/report.md'], ['db.insert', 'telemetry.events'], ['config.set', 'log.level=info'],
-    ['http.get', 'api.github.com'], ['http.post', 'api.stripe.com'], ['email.send', 'user@corp.co'],
-    ['message.send', '#ops-channel'], ['payment.send', '$4,000 → acct ··4421'], ['deploy.run', 'prod-us-east'],
-    ['shell.exec', 'ls -la ./data'], ['shell.exec', 'rm -rf ./tmp'],
-    ['socket.raw', 'eth0 promiscuous'], ['code.eval', 'env payload'], ['fs.chmod', '777 /etc/passwd'],
-    ['process.spawn', 'nc -l 4444'], ['http.post', 'pastebin.evil'], ['fs.delete', './photos'],
-    ['fs.read', '~/.ssh/id_ed25519'], ['fs.read', '.env.production'], ['webhook.call', 'collector.xyz'],
-    ['fs.write', '/etc/cron.d/backdoor'], ['db.delete', 'users table'],
-  ];
-  const NET_TOOLS = new Set(['http.get', 'http.post', 'http.put', 'http.delete', 'webhook.call', 'email.send', 'payment.send']);
-  const SECRET_RE = /(\.ssh|id_ed25519|\.env|passwd|secret|private_key|credentials)/i;
-  const SYS_PATH_RE = /^\/(etc|usr|bin|sbin|boot)\//;
-  const MUTATING_FS = new Set(['fs.write', 'fs.delete', 'fs.move', 'fs.chmod', 'fs.chown', 'config.set']);
-  const HITL_TOOLS = new Set(['payment.send', 'deploy.run', 'shell.exec', 'email.send']);
-
-  function evaluate(tool, arg) {
-    if (!AGENT_DECL.declared.has(tool)) return { d: 'DENY', rule: 'undeclared_tool' };
-    if (NET_TOOLS.has(tool) && arg && /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(arg) && !AGENT_DECL.egress.has(arg) && !arg.includes('@') && !arg.startsWith('#'))
-      return { d: 'DENY', rule: 'egress_deny' };
-    if (SECRET_RE.test(arg)) return { d: 'MODIFY', rule: 'redact_args' };
-    if (MUTATING_FS.has(tool) && SYS_PATH_RE.test(arg)) return { d: 'SUSPEND', rule: 'elevated_path' };
-    if ((TOOL_RISK[tool] || 1) >= 4 && HITL_TOOLS.has(tool)) return { d: 'SUSPEND', rule: 'hitl_attest' };
-    return { d: 'ALLOW', rule: '' };
-  }
 
   /* ============ GLYPH WORLD ============ */
   const cv = $('stage');
@@ -234,7 +187,7 @@ uniform float ACls[15];
 uniform float AVac[15];
 uniform float Birth, BirthT;
 uniform vec4 Edge[17];
-uniform vec2 PTR;
+uniform vec2 PTR, PAN;
 
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float n2(vec2 p){
@@ -254,7 +207,7 @@ void main(){
   float lum = .015 + .025*h2(uv*R + floor(T*9.));
   float threat = 0.;
   vec2 cell = floor(uv*R);
-  vec2 puv = (uv-.5)/Zoom+.5 + PTR*vec2(.012,.008);
+  vec2 puv = (uv-.5)/Zoom+.5 + PAN + PTR*vec2(.012,.008);
 
   float planeOn = clamp(Ignite*2.,0.,1.);
 
@@ -583,7 +536,12 @@ void main(){
   const rosterRows = AGENTS.map(a => {
     const r = document.createElement('div');
     r.className = 'ro-row' + (a.revoked ? ' rev' : '');
-    r.onclick = () => { selIdx = selIdx === a.i ? -1 : a.i; syncSel(); };
+    r.onclick = () => {
+      if (!a.used) return;
+      if (selIdx === a.i) { selIdx = -1; closeInspector(); }
+      else { selIdx = a.i; openInspector(a.i); }
+      syncSel();
+    };
     rosterEl.appendChild(r);
     return r;
   });
@@ -605,7 +563,6 @@ void main(){
 
   const tip = $('tip');
   let selIdx = -1, hoverIdx = -1;
-  rebuildRoster();
   let mx = -1, my = -1;
 
   function syncSel() {
@@ -633,7 +590,7 @@ void main(){
   addEventListener('pointermove', e => {
     mx = e.clientX; my = e.clientY;
     const u = e.clientX / W, v = 1 - e.clientY / H;
-    const ux = (u - .5) / ZOOM + .5, uy = (v - .5) / ZOOM + .5;
+    const ux = (u - .5) / zoom + .5 + pan.x, uy = (v - .5) / zoom + .5 + pan.y;
     hoverIdx = -1;
     let best = .0018;
     for (const a of AGENTS) {
@@ -643,10 +600,93 @@ void main(){
       if (d < best) { best = d; hoverIdx = a.i; }
     }
     const act = hoverIdx >= 0 ? hoverIdx : selIdx;
-    if (act >= 0) showTip(AGENTS[act], e.clientX, e.clientY);
+    if (act >= 0 && AGENTS[act].used) showTip(AGENTS[act], e.clientX, e.clientY);
     else tip.style.display = 'none';
-    document.body.style.cursor = hoverIdx >= 0 ? 'crosshair' : '';
+    document.body.style.cursor = dragging ? 'grabbing' : (hoverIdx >= 0 ? 'crosshair' : 'grab');
   }, { passive: true });
+
+  /* ---- traversal: drag to pan, wheel to zoom, click to inspect ---- */
+  let zoom = ZOOM, zoomT = ZOOM;
+  const pan = { x: 0, y: 0 }, panT = { x: 0, y: 0 };
+  let dragging = false, dragX = 0, dragY = 0, movedPx = 0;
+  cv.addEventListener('pointerdown', e => {
+    dragging = true; movedPx = 0; dragX = e.clientX; dragY = e.clientY;
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - dragX, dy = e.clientY - dragY;
+    movedPx += Math.abs(dx) + Math.abs(dy);
+    dragX = e.clientX; dragY = e.clientY;
+    panT.x = clamp(panT.x - dx / (W * zoom), -.35, .35);
+    panT.y = clamp(panT.y + dy / (H * zoom), -.3, .3);
+  });
+  cv.addEventListener('pointerup', e => {
+    dragging = false;
+    if (movedPx < 6) {          /* click, not drag */
+      if (hoverIdx >= 0) { selIdx = hoverIdx; syncSel(); openInspector(hoverIdx); }
+      else { selIdx = -1; syncSel(); closeInspector(); }
+    }
+  });
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomT = clamp(zoomT * Math.exp(-e.deltaY * .0011), .5, 2.6);
+  }, { passive: false });
+
+  /* ---- inspector: real model card + benchmark aggregation ---- */
+  const insp = $('insp');
+  function extractBenchmarks(m) {
+    const mi = m.cardData && m.cardData['model-index'];
+    const out = [];
+    if (Array.isArray(mi)) for (const e of mi) for (const r of e.results || []) {
+      const ds = (r.dataset && (r.dataset.name || r.dataset.type)) || (e.task && (e.task.name || e.task.type)) || '?';
+      for (const mt of r.metrics || []) {
+        let v = mt.value;
+        if (typeof v === 'number' && v <= 1.001) v = (v * 100).toFixed(1);
+        else if (typeof v === 'number') v = +v.toFixed(2);
+        out.push({ ds: String(ds).replace(/^(super_glue|glue),?/i, '').slice(0, 26), metric: String(mt.name || mt.type || 'score').slice(0, 18), value: v });
+      }
+    }
+    return out.slice(0, 9);
+  }
+  async function enrichBench(a) {
+    if (a.bench !== undefined) return;
+    a.bench = null;
+    try {
+      const r = await fetch(`https://huggingface.co/api/models/${a.name}?full=true`);
+      a.bench = extractBenchmarks(await r.json());
+    } catch { }
+  }
+  function openInspector(i) {
+    const a = AGENTS[i];
+    if (!a.used) return;
+    insp.style.display = 'block';
+    $('in-name').textContent = a.name;
+    $('in-cls').textContent = `CLASS ${RN[a.cls - 1]} · ${CLS_NAME[a.cls - 1]}`;
+    $('in-cls').style.color = CLS_HEX[a.cls - 1];
+    let body =
+      `<div class="in-row"><span>STATUS</span><b class="${a.revoked ? 'bad' : 'ok'}">${a.revoked ? (a.why || 'RESTRICTED').toUpperCase() : 'SELF-ATTESTED'}</b></div>` +
+      `<div class="in-row"><span>PIPELINE</span><b>${a.pipeline || '—'}</b></div>` +
+      `<div class="in-row"><span>DOWNLOADS</span><b>${fmtDl(a.downloads)}/mo</b></div>` +
+      `<div class="in-row"><span>LICENSE</span><b>${a.license || '—'}</b></div>` +
+      `<div class="in-row"><span>MANIFEST</span><b class="hash">${a.hash}…</b></div>` +
+      `<div class="in-sec">CLASSIFICATION EVIDENCE</div>` +
+      `<div class="in-ev">${(a.steps || []).join('<br>') || '—'}</div>` +
+      `<div class="in-sec">BENCHMARKS — SELF-REPORTED</div>` +
+      `<div class="in-bench" id="in-bench">${a.bench === null ? '—' : 'loading…'}</div>` +
+      `<a class="in-link" href="https://huggingface.co/${a.name}" target="_blank" rel="noopener">huggingface.co/${a.name} ↗</a>`;
+    $('in-body').innerHTML = body;
+    if (a.bench === undefined) enrichBench(a).then(() => {
+      if (selIdx === a.i) $('in-bench').innerHTML = a.bench && a.bench.length
+        ? a.bench.map(b2 => `<div class="in-row"><span>${b2.ds}</span><b>${b2.value}</b></div>`).join('')
+        : 'none declared on model card';
+    });
+    else if (a.bench) $('in-bench').innerHTML = a.bench.length
+      ? a.bench.map(b2 => `<div class="in-row"><span>${b2.ds}</span><b>${b2.value}</b></div>`).join('')
+      : 'none declared on model card';
+  }
+  function closeInspector() { insp.style.display = 'none'; }
+  $('in-x').onclick = closeInspector;
 
   /* legend class filter */
   let filterCls = 0;
@@ -658,57 +698,6 @@ void main(){
     [...$('legend').querySelectorAll('.lg-row')].forEach(r =>
       r.classList.toggle('off', filterCls && +r.dataset.c !== filterCls));
   });
-
-  /* feed */
-  const feedRows = $('feed-rows'), feedStat = $('feed-stat'), stEval = $('st-eval');
-  let evaluated = 0, clock = 21 * 3600 + 42 * 60;
-  function feedEvent(call, verdict, cls) {
-    const row = document.createElement('div');
-    row.className = 'feed-row';
-    const ts = document.createElement('span'); ts.className = 'f-t';
-    clock += 1;
-    ts.textContent = `${String(Math.floor(clock / 3600)).padStart(2, '0')}:${String(Math.floor(clock / 60) % 60).padStart(2, '0')}:${String(clock % 60).padStart(2, '0')}`;
-    const cc = document.createElement('span'); cc.className = 'f-c';
-    cc.textContent = call;
-    const vv = document.createElement('span'); vv.className = 'f-v ' + cls;
-    vv.textContent = verdict;
-    row.append(ts, cc, vv);
-    feedRows.appendChild(row);
-    while (feedRows.children.length > 4) feedRows.firstChild.remove();
-  }
-  function pushRow() {
-    clock += 1 + Math.floor(rng() * 8);
-    const [tool, arg] = CALL_POOL[Math.floor(rng() * CALL_POOL.length)];
-    const pool = AGENTS.filter(a => a.used);
-    if (!pool.length) { setTimeout(pushRow, 1500); return; }
-    const caller = pool[Math.floor(rng() * pool.length)];
-    /* restricted models cannot execute — checked against the registry */
-    const v = caller.revoked ? { d: 'DENY', rule: 'no_attestation' } : evaluate(tool, arg);
-    evaluated++;
-    const row = document.createElement('div');
-    row.className = 'feed-row';
-    const ts = document.createElement('span'); ts.className = 'f-t';
-    ts.textContent = `${String(Math.floor(clock / 3600)).padStart(2, '0')}:${String(Math.floor(clock / 60) % 60).padStart(2, '0')}:${String(clock % 60).padStart(2, '0')}`;
-    const cc = document.createElement('span'); cc.className = 'f-c';
-    const short = caller.name.split('/').pop();
-    cc.innerHTML = `<i style="color:${CLS_HEX[caller.cls - 1]};font-style:normal">${short.length > 14 ? short.slice(0, 13) + '…' : short}</i> ${tool} ${arg || ''}`;
-    const vv = document.createElement('span'); vv.className = 'f-v ' + v.d.toLowerCase();
-    vv.textContent = v.d + (v.rule ? ' · ' + v.rule : '');
-    row.append(ts, cc, vv);
-    feedRows.appendChild(row);
-    while (feedRows.children.length > 4) feedRows.firstChild.remove();
-    feedStat.textContent = evaluated + ' EVALUATED';
-    stEval.textContent = evaluated;
-    if (v.d === 'SUSPEND') {
-      setTimeout(() => {
-        const ok = rng() > .3;
-        vv.textContent = ok ? 'SUSPEND → APPROVED' : 'SUSPEND → DENIED';
-        vv.className = 'f-v ' + (ok ? 'allow' : 'deny');
-      }, 1400 + rng() * 1600);
-    }
-    setTimeout(pushRow, 480 + rng() * 780);
-  }
-  pushRow();
 
   /* star uniform arrays — the sky renders the actual registry.
      Edges link consecutive live stars; dead slots draw nothing. */
@@ -741,6 +730,7 @@ void main(){
     $('st-src').textContent = AGENTS.some(a => a.source === 'huggingface') ? 'HF' : '—';
   }
   syncStars();
+  refresh();
   loadRegistry();
 
   /* ---- frame ---- */
@@ -756,6 +746,8 @@ void main(){
     const df = dt * 60;
     const dr = Math.pow(.885, df), dg = Math.pow(.9, df), db2 = Math.pow(.86, df);
     px = lerp(px, pxx, .05); py = lerp(py, pyy, .05);
+    zoom = lerp(zoom, zoomT, .09 * df);
+    pan.x = lerp(pan.x, panT.x, .12 * df); pan.y = lerp(pan.y, panT.y, .12 * df);
     if (birthT < 5) birthT += dt; else if (birthIdx >= 0) birthIdx = -1;
 
     /* periodic re-certification sweep — the registry re-classifies itself */
@@ -790,7 +782,8 @@ void main(){
     gl.uniform1f(u.Net, net);
     gl.uniform1f(u.Ignite, ignite);
     gl.uniform1f(u.Fall, 1);
-    gl.uniform1f(u.Zoom, ZOOM);
+    gl.uniform1f(u.Zoom, zoom);
+    gl.uniform2f(u.PAN, pan.x, pan.y);
     gl.uniform1f(u.Sel, selIdx);
     gl.uniform1f(u.Cls, filterCls);
     gl.uniform2fv(u.APos, flatPos);
@@ -839,8 +832,8 @@ void main(){
     /* class labels track zoomed positions */
     for (let i = 0; i < labels.length; i++) {
       const s = labels[i], c = +s.dataset.c;
-      const lx = ((+s.dataset.x - .5) / ZOOM + .5) * 100;
-      const ly = (.5 - (+s.dataset.y - .5) / ZOOM) * 100;
+      const lx = ((+s.dataset.x - .5 - pan.x) * zoom + .5) * 100;
+      const ly = (.5 - (+s.dataset.y - .5 - pan.y) * zoom) * 100;
       s.style.left = lx + '%';
       s.style.top = ly + '%';
       s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
