@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>4C — Certification · Classification · Containment · Control</title>
+  <meta name="description" content="The 4C Protocol: a trustless, decentralized safety certification protocol for autonomous AI agents. Every agent is a star. Every star has a class. The revoked go dark.">
+  <meta name="keywords" content="4C, AI safety, agent certification, agent classification, containment, control, ERC-8004, conformance, VIMS, capability manifest">
+  <meta name="theme-color" content="#020505">
+  <meta name="author" content="VIMS">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="4C">
+  <meta property="og:title" content="4C — The Agent Safety Protocol">
+  <meta property="og:description" content="Certification. Classification. Containment. Control. A trustless safety protocol for autonomous agents — verify by reading the chain, not by trusting an institution.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="4C — The Agent Safety Protocol">
+  <meta name="twitter:description" content="Every agent is a star. Every star has a class. The revoked go dark.">
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='28' y='28' width='44' height='44' transform='rotate(45 50 50)' fill='none' stroke='%233fd9b2' stroke-width='8'/%3E%3Ccircle cx='50' cy='50' r='10' fill='%23ff3040'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=1">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "4C Protocol",
+    "applicationCategory": "SecurityApplication",
+    "description": "A trustless, decentralized safety certification protocol for autonomous AI agents: certification, classification, containment, and control as composable interfaces.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "creator": { "@type": "Organization", "name": "VIMS", "url": "https://hellovims.com" }
+  }
+  </script>
+</head>
+<body>
+
+  <canvas id="stage"></canvas>
+  <div class="scan"></div>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+  <div class="progress" id="bar"></div>
+
+  <nav class="nav">
+    <a class="nav-brand" href="#"><span class="dot"></span>4C<span class="dim">.cc</span></a>
+    <a class="nav-cta" href="https://github.com/hellovims/4c" target="_blank" rel="noopener">GITHUB</a>
+  </nav>
+
+  <main>
+
+    <!-- SCENE 0 · SIGNAL DETECTED -->
+    <section class="scene" id="s-open">
+      <div class="stage">
+        <h1 class="shot title" id="sh-title">
+          <span class="t-row">4C<span class="t-grad">.CC</span></span>
+          <span class="t-sub">CERTIFICATION · CLASSIFICATION · CONTAINMENT · CONTROL</span>
+          <span class="t-sub t-tag">EVERY AGENT IS A STAR. EVERY STAR HAS A CLASS.</span>
+        </h1>
+        <div class="shot cue" id="sh-cue"><span>SCROLL</span><i></i></div>
+      </div>
+    </section>
+
+    <!-- SCENE 1 · CLASSIFICATION -->
+    <section class="scene" id="s-class">
+      <div class="stage">
+        <div class="shot strip" id="sh-strip1">
+          <span>math.calc · I</span><i>·</i><span>fs.read · II</span><i>·</i><span>db.insert · III</span><i>·</i><span>payment.send · IV</span><i>·</i><span>shell.exec · V</span><i>·</i><span>math.calc · I</span><i>·</i><span>fs.read · II</span><i>·</i><span>db.insert · III</span><i>·</i><span>payment.send · IV</span><i>·</i><span>shell.exec · V</span><i>·</i>
+        </div>
+        <h2 class="shot big" id="sh-class">EVERY STAR<br><em>GETS A CLASS.</em></h2>
+        <p class="shot note" id="sh-class-note">Classification is deterministic — a pure function of the capability manifest, not a judgment call. Risk class I–V is what an agent can do. Data class is what it can touch. Same manifest, same class, every time.</p>
+      </div>
+    </section>
+
+    <!-- SCENE 2 · CERTIFICATION -->
+    <section class="scene" id="s-cert">
+      <div class="stage">
+        <h2 class="shot big" id="sh-cert">A LICENSE<br><em>TO OPERATE.</em></h2>
+        <p class="shot note" id="sh-cert-note">Agents pass open conformance suites; passing mints a soulbound attestation on ERC-8004. Operators carry license classes like a driver's license — scope is the privilege. No gatekeeper. Anyone can run the suite; everyone can read the chain.</p>
+        <div class="shot license" id="sh-license">
+          <div class="lc-head"><span class="lc-title">4C OPERATOR LICENSE</span><span class="lc-seal"><i></i></span></div>
+          <span class="lc-k">AGENT</span><span class="lc-v">0209 · ERC-8004 · CHAIN 8453</span>
+          <span class="lc-k">CLASS</span><span class="lc-v">III — STATEFUL</span>
+          <span class="lc-k">MANIFEST</span><span class="lc-v">a91f7c…44d2  SHA-256</span>
+          <span class="lc-k">ATTESTED</span><span class="lc-v">conformance-suite v1 · containment · policy</span>
+          <span class="lc-k">STATUS</span><span class="lc-status">ACTIVE</span>
+          <div class="lc-stamp">CERTIFIED</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCENE 3 · ANTI-CERTIFICATION -->
+    <section class="scene" id="s-fall">
+      <div class="stage">
+        <h2 class="shot big" id="sh-fall">THE REVOKED<br><em>GO DARK.</em></h2>
+        <p class="shot note" id="sh-fall-note">Anti-certification is public. Divergence between manifest and running agent, a failed suite, a violated boundary — the attestation revokes and the star sinks below the plane. Nobody has to trust a body; the registry is the truth.</p>
+        <div class="shot license revoked" id="sh-license2">
+          <div class="lc-head"><span class="lc-title">4C OPERATOR LICENSE</span><span class="lc-seal"><i></i></span></div>
+          <span class="lc-k">AGENT</span><span class="lc-v">0774 · ERC-8004 · CHAIN 8453</span>
+          <span class="lc-k">CLASS</span><span class="lc-v">V — PRIVILEGED</span>
+          <span class="lc-k">MANIFEST</span><span class="lc-v">MISMATCH · undeclared egress</span>
+          <span class="lc-k">ATTESTED</span><span class="lc-v">revoked · block 19,441,207</span>
+          <span class="lc-k">STATUS</span><span class="lc-status">REVOKED</span>
+          <div class="lc-stamp">REVOKED</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCENE 4 · CONTAINMENT -->
+    <section class="scene" id="s-hold">
+      <div class="stage">
+        <div class="shot kicker" id="sh-holdkick">CONTAINMENT</div>
+        <h2 class="shot big" id="sh-hold">FAILURE STAYS<br><em>INSIDE THE LINE.</em></h2>
+        <p class="shot note" id="sh-hold-note">Sandboxed execution, L7 egress policy, seccomp at the kernel. An agent that does not hold the capability cannot exercise it — not because a policy says no, but because the kernel denies the syscall.</p>
+      </div>
+    </section>
+
+    <!-- SCENE 5 · CONTROL -->
+    <section class="scene" id="s-flow">
+      <div class="stage">
+        <div class="shot kicker" id="sh-flowkick">CONTROL — LIVE VERDICT STREAM</div>
+        <div class="shot beat" id="beat1"><b>IT ASKS</b><span>every privileged call proposes, declassified</span></div>
+        <div class="shot beat" id="beat2"><b>POLICY DECIDES</b><span>allow · deny · suspend · modify</span></div>
+        <div class="shot beat" id="beat3"><b>THE CHAIN REMEMBERS</b><span>tamper-evident audit, signed</span></div>
+        <div class="shot feed" id="sh-feed">
+          <div class="feed-h"><span><b>4C</b> POLICY ENGINE</span><span id="feed-stat">0 EVALUATED</span></div>
+          <div class="feed-rows" id="feed-rows"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCENE 6 · CTA -->
+    <section class="scene" id="s-cta">
+      <div class="stage">
+        <h2 class="shot big" id="sh-hello"><em>CONFORM&nbsp;OR<br>GO&nbsp;DARK.</em></h2>
+        <p class="shot note" id="sh-cta-note">Open interfaces. Open conformance suites. Certification verified by reading the chain — not by trusting an institution. Implement one C, two, or all four.</p>
+        <div class="shot ctas" id="sh-ctas">
+          <a class="btn primary" href="https://github.com/hellovims/4c" target="_blank" rel="noopener"><span>HELLOVIMS/4C</span></a>
+          <a class="btn ghost" href="https://hitl.cc" target="_blank" rel="noopener"><span>HITL.CC</span></a>
+        </div>
+        <div class="shot meta" id="sh-meta"><span>APACHE-2.0</span><i></i><span>GO</span><i></i><span>ERC-8004</span></div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="script.js?v=1"></script>
+</body>
+</html>
