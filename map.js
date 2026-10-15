@@ -40,7 +40,7 @@
      not the slot. Empty slots draw nothing. */
   const EY = .34, ZOOM = 1.05;
   const AGENTS = [];
-  for (let i = 0; i < 15; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
+  for (let i = 0; i < 24; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
 
   async function manifestHash(m) {
     const raw = JSON.stringify({ id: m.id, sha: m.sha || null, tags: m.tags, pt: m.pipeline_tag, gated: !!m.gated });
@@ -50,12 +50,14 @@
 
   function placeModel(mo, i) {
     const a = AGENTS[i];
-    a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe;
-    a.x = .08 + .80 * (mo.cls - 1) / 4 + (fr(i * 7.13 + .13) - .5) * .15;
+    a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe; a.score = mo.score;
+    /* continuous spectral position — class bands lie along it */
+    const sc = mo.score ?? (mo.cls - 1) / 4;
+    a.x = .07 + .84 * sc + (fr(i * 7.13 + .13) - .5) * .045;
     a.y = mo.unsafe
       ? EY - .22 - fr(i * 5.71 + .31) * .12
-      : EY + .30 - (mo.cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .14;
-    a.name = mo.m.id; a.downloads = mo.downloads;
+      : EY + .30 * (1 - sc) + (fr(i * 3.77 + .41) - .5) * .075;
+    a.name = mo.m.id; a.downloads = mo.downloads; a.likes = mo.m.likes || 0;
     a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
     a.source = 'huggingface'; a.steps = mo.steps;
     a.license = (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
@@ -81,18 +83,27 @@
     const mm = /image-text|vision|vl-|multimodal|omni/.test(pt + ' ' + id) || tags.includes('image-text-to-text');
     const code = /code|coder|codestral|starcoder/.test(id);
     const steps = [];
+    /* continuous capability score — class boundaries are spectral bands */
+    let score = Math.min(1, Math.log10(1 + pm) / 2.5) * .52;
+    if (pm >= 60) { score += .12; steps.push('frontier ≥60B +0.12'); }
+    if (pm) steps.push(`${pm}B params → score ${score.toFixed(2)}`);
     let cls;
-    if (/feature-extraction|sentence-similarity|text-ranking|fill-mask/.test(pt)) { cls = 1; steps.push(`pipeline ${pt} → embeddings`); }
-    else if (/text-classification|token-classification|translation|summarization|question-answering/.test(pt)) { cls = 2; steps.push(`pipeline ${pt} → bounded`); }
-    else if (gen || /gpt|llama|qwen|mistral|gemma|phi|deepseek|grok|falcon|mixtral/.test(id)) { cls = 3; steps.push('generative → III'); }
-    else { cls = 1; steps.push(`pipeline ${pt || 'none'} → minimal`); }
-    if (cls === 3 && (tools || code || mm || pm >= 20)) { cls = 4; steps.push(`${[tools && 'tools', code && 'code', mm && 'multimodal', pm >= 20 && `${pm}B`].filter(Boolean).join('+')} → IV`); }
-    if (pm >= 60 || (tools && code) || /r1|reasoning|o1/.test(id)) { cls = 5; steps.push(`${pm >= 60 ? pm + 'B' : tools && code ? 'tools+code' : 'reasoner'} → V`); }
+    if (/feature-extraction|sentence-similarity|text-ranking|fill-mask/.test(pt)) { steps.push(`pipeline ${pt} → embeddings`); }
+    else if (/text-classification|token-classification|translation|summarization|question-answering/.test(pt)) { score += .10; steps.push(`pipeline ${pt} → bounded`); }
+    else if (gen || /gpt|llama|qwen|mistral|gemma|phi|deepseek|grok|falcon|mixtral/.test(id)) { score += .18; steps.push('generative +0.18'); }
+    else steps.push(`pipeline ${pt || 'none'} → minimal`);
+    if (tools) { score += .09; steps.push('tools/instruct +0.09'); }
+    if (code) { score += .08; steps.push('code +0.08'); }
+    if (mm) { score += .10; steps.push('multimodal +0.10'); }
+    if (/r1|reasoning|o1|thinking/.test(id)) { score += .10; steps.push('reasoner +0.10'); }
+    score = Math.min(1, score);
+    cls = score < .15 ? 1 : score < .35 ? 2 : score < .58 ? 3 : score < .78 ? 4 : 5;
+    steps.push(`score ${score.toFixed(2)} → CLASS ${RN[cls - 1]}`);
     const unsafe = !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
     if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
     else if (unsafe) steps.push('no safetensors → restricted');
     else steps.push('self-attested manifest');
-    return { cls, unsafe, steps };
+    return { cls, unsafe, steps, score };
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
@@ -101,8 +112,11 @@
     const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
     const byCls = c => ok.filter(mo => mo.cls === c);
     let i = 0;
-    for (let c = 1; c <= 5 && i < 12; c++) for (const mo of byCls(c).slice(0, 3)) { if (i >= 12) break; placeModel(mo, i++); }
-    for (const mo of bad.slice(0, 3)) { if (i >= 15) break; placeModel(mo, i++); }
+    for (let c = 1; c <= 5 && i < 20; c++) for (const mo of byCls(c).slice(0, 4)) { if (i >= 20) break; placeModel(mo, i++); }
+    /* backfill: leftover attested slots take next-ranked models of any class */
+    const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
+    for (const mo of ok) { if (i >= 20) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
+    for (const mo of bad.slice(0, 4)) { if (i >= 24) break; placeModel(mo, i++); }
     refresh();
   }
 
@@ -112,8 +126,8 @@
       const snap = await fetch('catalog.json').then(r => r.json());
       const recs = snap.models.map(e => {
         const m2 = { id: e.id, tags: e.tags || [], pipeline_tag: e.pt, gated: e.gated, downloads: e.dl };
-        const { cls, unsafe, steps } = classifyModel(m2);
-        return { m: m2, cls, unsafe, steps, downloads: e.dl || 0 };
+        const { cls, unsafe, steps, score } = classifyModel(m2);
+        return { m: m2, cls, unsafe, steps, score, downloads: e.dl || 0 };
       });
       fillRegistry(recs);
       $('st-src').textContent = 'SNAPSHOT';
@@ -130,8 +144,8 @@
       for (const l of lists) for (const m of l) {
         if (!m.id || seen.has(m.id)) continue;
         seen.add(m.id);
-        const { cls, unsafe, steps } = classifyModel(m);
-        models.push({ m, cls, unsafe, steps, downloads: m.downloads || 0 });
+        const { cls, unsafe, steps, score } = classifyModel(m);
+        models.push({ m, cls, unsafe, steps, score, downloads: m.downloads || 0, likes: m.likes || 0 });
       }
       models.sort((a, b) => b.downloads - a.downloads);
       fillRegistry(models);
@@ -158,8 +172,8 @@
       cxIn.disabled = false; cxIn.focus();
       return;
     }
-    const { cls, unsafe, steps } = classifyModel(m);
-    const rec = { m, cls, unsafe, steps, downloads: m.downloads || 0 };
+    const { cls, unsafe, steps, score } = classifyModel(m);
+    const rec = { m, cls, unsafe, steps, score, downloads: m.downloads || 0 };
     /* prefer a vacant slot; else evict the least-downloaded of the same kind */
     let slot = AGENTS.find(a => !a.used);
     if (!slot) slot = AGENTS.filter(a => a.revoked === unsafe).sort((x, y) => (x.downloads || 0) - (y.downloads || 0))[0];
@@ -171,6 +185,10 @@
     cxIn.disabled = false;
   }
   cxIn.addEventListener('keydown', e => { if (e.key === 'Enter' && cxIn.value.trim()) classifyQuery(cxIn.value); });
+  addEventListener('keydown', e => {
+    if (e.key === '/' && document.activeElement !== cxIn) { e.preventDefault(); cxIn.focus(); }
+    if (e.key === 'Escape') { selIdx = -1; syncSel(); closeInspector(); cxIn.blur(); }
+  });
   let cxT;
   cxIn.addEventListener('input', () => {
     clearTimeout(cxT);
@@ -197,12 +215,12 @@ uniform vec2 R;
 uniform float T;
 uniform float P, Spike, Spin, Glitch, Threat, Gate, Press, Ekg, Lum, Ex, Ey, Face, Steps;
 uniform float Net, Ignite, Fall, Zoom, Sel, Cls;
-uniform vec2 APos[15];
-uniform float ARev[15];
-uniform float ACls[15];
-uniform float AVac[15];
+uniform vec2 APos[24];
+uniform float ARev[24];
+uniform float ACls[24];
+uniform float AVac[24];
 uniform float Birth, BirthT;
-uniform vec4 Edge[17];
+uniform vec4 Edge[26];
 uniform vec2 PTR, PAN;
 
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
@@ -213,7 +231,7 @@ float n2(vec2 p){
 float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; a*=.5; } return s; }
 
 float edgeCls(vec2 p){
-  for(int i=0;i<15;i++){ if(distance(p,APos[i])<.002) return ACls[i]; }
+  for(int i=0;i<24;i++){ if(distance(p,APos[i])<.002) return ACls[i]; }
   return 3.;
 }
 
@@ -266,7 +284,7 @@ void main(){
 
   /* ---- the registry ---- */
   float classInk=0.;
-  for(int i=0;i<15;i++){
+  for(int i=0;i<24;i++){
     if(AVac[i]>.5) continue;
     vec2 ap=APos[i];
     float on=step(ap.x-.02,Ignite);
@@ -292,7 +310,7 @@ void main(){
     lum+=exp(-r*30.)*rec*.9;
     lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
     /* attestation halo */
-    float hon=clamp(Net*1.5-float(i)/15.,0.,1.);
+    float hon=clamp(Net*1.5-float(i)/24.,0.,1.);
     float ring=smoothstep(.0045,.0012,abs(r-.021-.002*cls))*hon*.75*fdim;
     lum+=ring;
     classInk=max(classInk,(core+glow+ring)*cls*.2);
@@ -674,8 +692,10 @@ void main(){
     let body =
       `<div class="in-row"><span>STATUS</span><b class="${a.revoked ? 'bad' : 'ok'}">${a.revoked ? (a.why || 'RESTRICTED').toUpperCase() : 'SELF-ATTESTED'}</b></div>` +
       `<div class="in-row"><span>PIPELINE</span><b>${a.pipeline || '—'}</b></div>` +
-      `<div class="in-row"><span>DOWNLOADS</span><b>${fmtDl(a.downloads)}/mo</b></div>` +
+      `<div class="in-row"><span>DOWNLOADS</span><b>${fmtDl(a.downloads)}/mo · ♥${a.likes || 0}</b></div>` +
       `<div class="in-row"><span>LICENSE</span><b>${a.license || '—'}</b></div>` +
+      `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
+      `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
       `<div class="in-row"><span>MANIFEST</span><b class="hash">${a.hash}…</b></div>` +
       `<div class="in-sec">CLASSIFICATION EVIDENCE</div>` +
       `<div class="in-ev">${(a.steps || []).join('<br>') || '—'}</div>` +
@@ -708,9 +728,9 @@ void main(){
 
   /* star uniform arrays — the sky renders the actual registry.
      Edges link consecutive live stars; dead slots draw nothing. */
-  const flatPos = new Float32Array(30), flatRev = new Float32Array(15),
-    flatCls = new Float32Array(15), flatVac = new Float32Array(15),
-    flatEdge = new Float32Array(68);
+  const flatPos = new Float32Array(48), flatRev = new Float32Array(24),
+    flatCls = new Float32Array(24), flatVac = new Float32Array(24),
+    flatEdge = new Float32Array(104);
   function syncStars() {
     AGENTS.forEach((a, i) => {
       flatPos[i * 2] = a.x; flatPos[i * 2 + 1] = a.y;
@@ -721,20 +741,23 @@ void main(){
     const live = AGENTS.filter(a => a.used).map(a => a.i);
     flatEdge.fill(9);
     const pairs = [];
-    for (let k = 0; k + 1 < live.length && pairs.length < 14; k++) pairs.push([live[k], live[k + 1]]);
-    for (let e = 0; e < 3 && live.length > 4; e++) {
+    for (let k = 0; k + 1 < live.length && pairs.length < 22; k++) pairs.push([live[k], live[k + 1]]);
+    for (let e = 0; e < 4 && live.length > 4; e++) {
       const ai = live[Math.floor(fr(Math.sin(e * 127.1 + 3.7 * 311.7) * 43758.5453) * live.length)];
       const bi = live[Math.floor(fr(Math.sin(e * 127.1 + 7.3 * 311.7) * 43758.5453) * live.length)];
       if (ai !== bi) pairs.push([ai, bi]);
     }
-    pairs.slice(0, 17).forEach(([a, b], e) => flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4));
+    pairs.slice(0, 26).forEach(([a, b], e) => flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4));
   }
   function refresh() {
     syncStars(); rebuildRoster();
     $('st-reg').textContent = AGENTS.filter(a => a.used).length;
     $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
-    $('st-src').textContent = AGENTS.some(a => a.source === 'huggingface') ? 'HF' : '—';
+    document.querySelectorAll('#legend .lg-row .n').forEach(n => {
+      const c = +n.closest('.lg-row').dataset.c;
+      n.textContent = '×' + AGENTS.filter(a => a.used && a.cls === c).length;
+    });
   }
   syncStars();
   refresh();
@@ -846,7 +869,7 @@ void main(){
       s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
     }
     /* node name labels */
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 24; i++) {
       const a = AGENTS[i], s = nodeLabels[i];
       if (!a.used) { s.style.opacity = 0; continue; }
       const lx = ((a.x - .5 - pan.x) * zoom + .5) * 100;
