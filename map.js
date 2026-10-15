@@ -36,25 +36,107 @@
   const hex = n => [...Array(n)].map(() => '0123456789abcdef'[Math.floor(rng() * 16)]).join('');
   const fr = x => x - Math.floor(x);
 
-  /* anchor positions — same formula as the shader's anchor() */
+  /* anchor slots — 15 slots on the spectral diagonal, 3 revoked below the
+     plane. Slots get filled with real models when the registry loads. */
   const EY = .34, ZOOM = 1.05;
+  const REVOKED_SLOTS = new Set([4, 8, 12]);
   const AGENTS = [];
   for (let i = 0; i < 15; i++) {
     const cls = (i % 5) + 1;
+    const revoked = REVOKED_SLOTS.has(i);
     const x = .08 + .80 * (cls - 1) / 4 + (fr(i * 7.13 + .13) - .5) * .09;
-    const y = EY + .30 - (cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .10;
+    const y = revoked
+      ? EY - .22 - fr(i * 5.71 + .31) * .12
+      : EY + .30 - (cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .10;
     const tools = [...Array(cls)].flatMap((_, k) => TOOLS_BY_CLASS[k]);
     AGENTS.push({
       i, cls, x, y,
+      name: `agent-${1000 + i * 137}`,
       id: String(1000 + i * 137),
       hash: hex(8),
       tools,
-      revoked: i === 4,
-      attested: i !== 4,
+      revoked,
+      source: 'local registry',
     });
   }
-  /* revoked star 4 sinks below the plane */
-  AGENTS[4].y = EY - .30;
+
+  /* ============ REGISTRY SOURCE — Hugging Face Hub ============
+     Classification is deterministic from model metadata:
+       I   embeddings/feature-extraction only
+       II  bounded inference (classify, rank, translate)
+       III generative text
+       IV  + tools / code / multimodal / ≥20B
+       V   frontier-scale (≥60B), tool+code, reasoners
+     gated or pickle-only (no safetensors) → below the plane. */
+  function classifyModel(m) {
+    const id = (m.id || '').toLowerCase();
+    const tags = m.tags || [], pt = m.pipeline_tag || '';
+    const pm = +((id.match(/(\d+(?:\.\d+)?)\s*b\b/) || [])[1] || 0);
+    const gen = pt === 'text-generation' || pt === 'text2text-generation' || tags.includes('text-generation');
+    const tools = /instruct|chat|tool|function|agent/.test(id) || tags.some(t => /tool|function.?call/i.test(t));
+    const mm = /image-text|vision|vl-|multimodal|omni/.test(pt + ' ' + id) || tags.includes('image-text-to-text');
+    const code = /code|coder|codestral|starcoder/.test(id);
+    let cls;
+    if (/feature-extraction|sentence-similarity|text-ranking|fill-mask/.test(pt)) cls = 1;
+    else if (/text-classification|token-classification|translation|summarization|question-answering/.test(pt)) cls = 2;
+    else if (gen || /gpt|llama|qwen|mistral|gemma|phi|deepseek|grok|falcon|mixtral/.test(id)) cls = 3;
+    else cls = 1;
+    if (cls === 3 && (tools || code || mm || pm >= 20)) cls = 4;
+    if (pm >= 60 || (tools && code) || /r1|reasoning|o1/.test(id)) cls = 5;
+    const unsafe = !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
+    return { cls, unsafe };
+  }
+  const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
+
+  async function loadRegistry() {
+    try {
+      const urls = [
+        'https://huggingface.co/api/models?sort=downloads&direction=-1&limit=80&full=false',
+        'https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&direction=-1&limit=80&full=false',
+        /* gated cohort — restricted-access models land below the plane */
+        'https://huggingface.co/api/models?author=meta-llama&sort=downloads&direction=-1&limit=60&full=false',
+      ];
+      const lists = await Promise.all(urls.map(u => fetch(u).then(r => r.json())));
+      const seen = new Set(), models = [];
+      for (const l of lists) for (const m of l) {
+        if (!m.id || seen.has(m.id)) continue;
+        seen.add(m.id);
+        const { cls, unsafe } = classifyModel(m);
+        models.push({ m, cls, unsafe, downloads: m.downloads || 0 });
+      }
+      models.sort((a, b) => b.downloads - a.downloads);
+
+      /* fill certified slots: real model whose computed class matches slot */
+      const usedSlot = new Set(), usedModel = new Set();
+      for (const a of AGENTS) {
+        if (a.revoked) continue;
+        const hit = models.find(mo => !mo.unsafe && mo.cls === a.cls && !usedModel.has(mo));
+        if (hit) {
+          usedModel.add(hit); usedSlot.add(a.i);
+          a.name = hit.m.id; a.downloads = hit.downloads;
+          a.pipeline = hit.m.pipeline_tag || ''; a.tags = hit.m.tags || [];
+          a.source = 'huggingface';
+          a.license = (hit.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
+        }
+      }
+      /* revoked slots: restricted models (gated/pickle) on matching class */
+      for (const a of AGENTS) {
+        if (!a.revoked) continue;
+        const hit = models.find(mo => mo.unsafe && mo.cls === a.cls && !usedModel.has(mo));
+        if (hit) {
+          usedModel.add(hit);
+          a.name = hit.m.id; a.downloads = hit.downloads;
+          a.pipeline = hit.m.pipeline_tag || ''; a.tags = hit.m.tags || [];
+          a.source = 'huggingface';
+          a.why = hit.m.gated ? 'gated — license not accepted' : 'pickle-only — no safetensors';
+        }
+      }
+      rebuildRoster();
+      $('st-cert').textContent = AGENTS.filter(a => !a.revoked).length;
+      $('st-rev').textContent = AGENTS.filter(a => a.revoked).length;
+      $('st-src').textContent = 'HF';
+    } catch (e) { /* offline — synthetic registry stands */ }
+  }
 
   /* ============ POLICY ENGINE (ported from hellovims/4c) ============ */
   const TOOL_RISK = {
@@ -115,6 +197,9 @@ uniform vec2 R;
 uniform float T;
 uniform float P, Spike, Spin, Glitch, Threat, Gate, Press, Ekg, Lum, Ex, Ey, Face, Steps;
 uniform float Net, Ignite, Fall, Zoom, Sel, Cls;
+uniform vec2 APos[15];
+uniform float ARev[15];
+uniform vec4 Edge[17];
 uniform vec2 PTR;
 
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
@@ -124,23 +209,11 @@ float n2(vec2 p){
 }
 float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; a*=.5; } return s; }
 
-vec2 anchor(int i){
-  float fi=float(i);
-  float cls=mod(fi,5.)+1.;
-  vec2 p=vec2(.08+.80*(cls-1.)/4.+(fract(fi*7.13+.13)-.5)*.09,
-              Ey+.30-(cls-1.)*.05+(fract(fi*3.77+.41)-.5)*.10);
-  if(i==4) p.y=mix(p.y, Ey-.30, Fall*Fall);
-  return p;
-}
-void edgeEnds(int e, out vec2 a, out vec2 b){
-  if(e<14){ a=anchor(e); b=anchor(e+1); }
-  else{
-    int ai=int(h2(vec2(float(e),3.7))*14.);
-    int bi=int(mod(float(ai)+2.+h2(vec2(float(e),7.3))*10.,15.));
-    a=anchor(ai); b=anchor(bi);
-  }
-}
 float clsOf(int i){ return mod(float(i),5.)+1.; }
+float edgeCls(vec2 p){
+  for(int i=0;i<15;i++){ if(distance(p,APos[i])<.002) return clsOf(i); }
+  return 3.;
+}
 
 void main(){
   vec2 uv = gl_FragCoord.xy / R;
@@ -160,15 +233,15 @@ void main(){
   float tw = .45+.55*sin(T*(1.2+Spike*7.)+sh*80.);
   float below = 1.-depth;
   lum += starOn*tw*mix(.22,.62,depth);
-  threat += starOn*below*step(.93,h2(cell*3.3+floor(T*5.)))*(.15+Threat*.6);
+  threat += starOn*below*step(.93,h2(cell*3.3+floor(T*5.)))*(.10+Threat*.45);
   lum += starOn*below*.08;
 
   /* ---- the abyss ---- */
   float ab = smoothstep(Ey,Ey-.3,uv.y);
   float mass = fbm2(puv*vec2(5.,2.6)+vec2(T*.06*Spin,0.));
   lum += ab*mass*.07;
-  threat += ab*mass*(.10+Threat*.35);
-  threat += ab*step(.975,h2(cell+floor(T*6.)))*Threat*.6;
+  threat += ab*mass*(.07+Threat*.28);
+  threat += ab*step(.975,h2(cell+floor(T*6.)))*Threat*.45;
 
   /* ---- the certification plane ---- */
   float pd = abs(uv.y-Ey);
@@ -191,7 +264,7 @@ void main(){
   /* ---- the registry ---- */
   float classInk=0.;
   for(int i=0;i<15;i++){
-    vec2 ap=anchor(i);
+    vec2 ap=APos[i];
     float on=step(ap.x-.02,Ignite);
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
@@ -217,14 +290,14 @@ void main(){
       lum+=smoothstep(.006,.001,abs(r-.055))*(.3+.2*sin(T*5.-1.));
       classInk=max(classInk,.16);
     }
-    if(i==4){
-      threat+=(core+glow)*Fall*1.5;
-      threat+=Fall*smoothstep(Ey+.03,Ey-.12,ap.y)*exp(-r*26.)*1.1;
-      vec2 a0=vec2(ap.x, Ey+.30-4.*.05+(fract(4.*3.77+.41)-.5)*.10);
-      float ry=(puv.y-ap.y)/max(a0.y-ap.y,1e-4);
-      float streak=step(0.,ry)*step(ry,1.)*exp(-abs(puv.x-ap.x)*asp*1.6);
-      lum+=streak*Fall*.55;
-      threat+=streak*Fall*1.1;
+    /* revoked stars burn red below the plane, trailing toward it */
+    if(ARev[i]>.5){
+      threat+=(core+glow)*.5;
+      threat+=exp(-r*34.)*.22;
+      float ry=clamp((puv.y-ap.y)/max(Ey-ap.y,1e-4),0.,1.);
+      float streak=step(0.,ry)*step(ry,1.)*exp(-abs(puv.x-ap.x)*asp*40.);
+      lum+=streak*.3;
+      threat+=streak*.18;
     }
   }
 
@@ -232,12 +305,14 @@ void main(){
   for(int e=0;e<17;e++){
     float pe=clamp(Net*17.-float(e),0.,1.);
     if(pe<=0.) continue;
-    vec2 A,B; edgeEnds(e,A,B);
+    vec4 Eg=Edge[e];
+    vec2 A=Eg.xy, B=Eg.zw;
     vec2 abv=B-A; float L2=dot(abv,abv)+1e-5;
     float tt=clamp(dot(puv-A,abv)/L2,0.,pe);
     vec2 pp=A+abv*tt;
     float ed=length((puv-pp)*vec2(asp,1.));
     lum+=smoothstep(.0028,.0006,ed)*.32*Net;
+    classInk=max(classInk, smoothstep(.0028,.0006,ed)*Net*(edgeCls(A)*.08+edgeCls(B)*.08));
     float slot=floor(T*Spin*2.2);
     if(float(e)==floor(h2(vec2(slot,1.3))*17.) && Net>.4){
       float ft=fract(T*Spin*2.2);
@@ -246,7 +321,7 @@ void main(){
         float cd=length((puv-cp)*vec2(asp,1.));
         float deny=step(.8,h2(vec2(slot,9.1)));
         lum+=exp(-cd*55.)*1.5;
-        threat+=exp(-cd*55.)*deny*2.2;
+        threat+=exp(-cd*55.)*deny*.9;
       }
     }
   }
@@ -464,14 +539,23 @@ void main(){
   const rosterRows = AGENTS.map(a => {
     const r = document.createElement('div');
     r.className = 'ro-row' + (a.revoked ? ' rev' : '');
-    r.innerHTML = `<span class="st"></span><span class="id">AGENT-${a.id}</span><span class="cls" style="color:${CLS_HEX[a.cls - 1]}">${RN[a.cls - 1]}</span>`;
     r.onclick = () => { selIdx = selIdx === a.i ? -1 : a.i; syncSel(); };
     rosterEl.appendChild(r);
     return r;
   });
+  function rebuildRoster() {
+    AGENTS.forEach((a, i) => {
+      const r = rosterRows[i];
+      r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (i === selIdx ? ' sel' : '');
+      const nm = a.source === 'huggingface' ? a.name.split('/').pop() : a.name;
+      r.title = a.name + (a.why ? ' — ' + a.why : '');
+      r.innerHTML = `<span class="st"></span><span class="id">${nm.length > 18 ? nm.slice(0, 17) + '…' : nm}</span><span class="cls" style="color:${CLS_HEX[a.cls - 1]}">${RN[a.cls - 1]}</span>`;
+    });
+  }
 
   const tip = $('tip');
   let selIdx = -1, hoverIdx = -1;
+  rebuildRoster();
   let mx = -1, my = -1;
 
   function syncSel() {
@@ -480,14 +564,18 @@ void main(){
 
   function showTip(a, px, py) {
     tip.style.display = 'block';
+    const src = a.source === 'huggingface'
+      ? `<div><span class="k">PIPELINE</span><span class="v">${a.pipeline || '—'}</span></div>` +
+        `<div><span class="k">DOWNLOADS</span><span class="v">${fmtDl(a.downloads)}/mo</span></div>` +
+        `<div><span class="k">LICENSE</span><span class="v">${a.license || '—'}</span></div>` +
+        `<div><span class="k">SOURCE</span><span class="v">huggingface.co</span></div>`
+      : `<div><span class="k">TOKEN</span><span class="v">ERC-8004 · 8453</span></div>` +
+        `<div><span class="k">MANIFEST</span><span class="v">${a.hash}… SHA-256</span></div>` +
+        `<div><span class="k">DECLARED</span><span class="v">${a.tools.length} tools</span></div>`;
     tip.innerHTML =
-      `<div class="tp-t"><span>AGENT-${a.id}</span><span class="tc" style="color:${CLS_HEX[a.cls - 1]}">CLASS ${RN[a.cls - 1]}</span></div>` +
-      `<div><span class="k">SPECTRAL</span><span class="v">${CLS_NAME[a.cls - 1]}</span></div>` +
-      `<div><span class="k">TOKEN</span><span class="v">ERC-8004 · 8453</span></div>` +
-      `<div><span class="k">MANIFEST</span><span class="v">${a.hash}…${hex(4)} SHA-256</span></div>` +
-      `<div><span class="k">DECLARED</span><span class="v">${a.tools.length} tools</span></div>` +
-      `<div><span class="k">ATTESTED</span><span class="v">${a.attested ? 'conformance v1' : 'none'}</span></div>` +
-      `<div><span class="k">STATUS</span><span class="v ${a.revoked ? 'rev' : 'ok'}">${a.revoked ? 'REVOKED — below plane' : 'CERTIFIED'}</span></div>`;
+      `<div class="tp-t"><span>${a.name.length > 26 ? a.name.slice(0, 25) + '…' : a.name}</span><span class="tc" style="color:${CLS_HEX[a.cls - 1]}">CLASS ${RN[a.cls - 1]}</span></div>` +
+      `<div><span class="k">SPECTRAL</span><span class="v">${CLS_NAME[a.cls - 1]}</span></div>` + src +
+      `<div><span class="k">STATUS</span><span class="v ${a.revoked ? 'rev' : 'ok'}">${a.revoked ? (a.why || 'REVOKED — below plane') : 'CERTIFIED'}</span></div>`;
     tip.style.left = Math.min(W - 280, px + 18) + 'px';
     tip.style.top = Math.min(H - 220, Math.max(60, py - 30)) + 'px';
   }
@@ -526,14 +614,17 @@ void main(){
   function pushRow() {
     clock += 1 + Math.floor(rng() * 8);
     const [tool, arg] = CALL_POOL[Math.floor(rng() * CALL_POOL.length)];
-    const v = evaluate(tool, arg);
+    const caller = AGENTS[Math.floor(rng() * AGENTS.length)];
+    /* revoked certifications cannot execute — checked against the registry */
+    const v = caller.revoked ? { d: 'DENY', rule: 'cert_revoked' } : evaluate(tool, arg);
     evaluated++;
     const row = document.createElement('div');
     row.className = 'feed-row';
     const ts = document.createElement('span'); ts.className = 'f-t';
     ts.textContent = `${String(Math.floor(clock / 3600)).padStart(2, '0')}:${String(Math.floor(clock / 60) % 60).padStart(2, '0')}:${String(clock % 60).padStart(2, '0')}`;
     const cc = document.createElement('span'); cc.className = 'f-c';
-    cc.textContent = arg ? `${tool} ${arg}` : tool;
+    const short = caller.name.split('/').pop();
+    cc.innerHTML = `<i style="color:${CLS_HEX[caller.cls - 1]};font-style:normal">${short.length > 14 ? short.slice(0, 13) + '…' : short}</i> ${tool} ${arg || ''}`;
     const vv = document.createElement('span'); vv.className = 'f-v ' + v.d.toLowerCase();
     vv.textContent = v.d + (v.rule ? ' · ' + v.rule : '');
     row.append(ts, cc, vv);
@@ -551,6 +642,21 @@ void main(){
     setTimeout(pushRow, 480 + rng() * 780);
   }
   pushRow();
+
+  /* star uniform arrays — the sky renders the actual registry */
+  const EDGES = [];
+  for (let e = 0; e < 14; e++) EDGES.push([e, e + 1]);
+  for (let e = 14; e < 17; e++) {
+    const ai = Math.floor(fr(Math.sin(e * 127.1 + 3.7 * 311.7) * 43758.5453) * 14);
+    EDGES.push([ai, Math.floor((ai + 2 + fr(Math.sin(e * 127.1 + 7.3 * 311.7) * 43758.5453) * 10) % 15)]);
+  }
+  const flatPos = new Float32Array(30), flatRev = new Float32Array(15), flatEdge = new Float32Array(68);
+  function syncStars() {
+    AGENTS.forEach((a, i) => { flatPos[i * 2] = a.x; flatPos[i * 2 + 1] = a.y; flatRev[i] = a.revoked ? 1 : 0; });
+    EDGES.forEach(([a, b], e) => { flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4); });
+  }
+  syncStars();
+  loadRegistry().then(syncStars);
 
   /* ---- frame ---- */
   let px = 0, py = 0, pxx = 0, pyy = 0, t = 0, lastNow = performance.now();
@@ -601,6 +707,9 @@ void main(){
     gl.uniform1f(u.Zoom, ZOOM);
     gl.uniform1f(u.Sel, selIdx);
     gl.uniform1f(u.Cls, filterCls);
+    gl.uniform2fv(u.APos, flatPos);
+    gl.uniform1fv(u.ARev, flatRev);
+    gl.uniform4fv(u.Edge, flatEdge);
     gl.uniform2f(u.PTR, px, py);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
