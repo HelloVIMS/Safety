@@ -36,28 +36,32 @@
   const hex = n => [...Array(n)].map(() => '0123456789abcdef'[Math.floor(rng() * 16)]).join('');
   const fr = x => x - Math.floor(x);
 
-  /* anchor slots — 15 slots on the spectral diagonal, 3 revoked below the
-     plane. Slots get filled with real models when the registry loads. */
+  /* 15 dynamic slots — position derives from the model's computed class,
+     not the slot. Empty slots draw nothing. */
   const EY = .34, ZOOM = 1.05;
-  const REVOKED_SLOTS = new Set([4, 8, 12]);
   const AGENTS = [];
-  for (let i = 0; i < 15; i++) {
-    const cls = (i % 5) + 1;
-    const revoked = REVOKED_SLOTS.has(i);
-    const x = .08 + .80 * (cls - 1) / 4 + (fr(i * 7.13 + .13) - .5) * .09;
-    const y = revoked
+  for (let i = 0; i < 15; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
+
+  async function manifestHash(m) {
+    const raw = JSON.stringify({ id: m.id, sha: m.sha || null, tags: m.tags, pt: m.pipeline_tag, gated: !!m.gated });
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function placeModel(mo, i) {
+    const a = AGENTS[i];
+    a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe;
+    a.x = .08 + .80 * (mo.cls - 1) / 4 + (fr(i * 7.13 + .13) - .5) * .09;
+    a.y = mo.unsafe
       ? EY - .22 - fr(i * 5.71 + .31) * .12
-      : EY + .30 - (cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .10;
-    const tools = [...Array(cls)].flatMap((_, k) => TOOLS_BY_CLASS[k]);
-    AGENTS.push({
-      i, cls, x, y,
-      name: `agent-${1000 + i * 137}`,
-      id: String(1000 + i * 137),
-      hash: hex(8),
-      tools,
-      revoked,
-      source: 'local registry',
-    });
+      : EY + .30 - (mo.cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .10;
+    a.name = mo.m.id; a.downloads = mo.downloads;
+    a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
+    a.source = 'huggingface'; a.steps = mo.steps;
+    a.license = (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
+    a.why = mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
+    a.hash = '…';
+    manifestHash(mo.m).then(h => { a.hash = h.slice(0, 8); });
   }
 
   /* ============ REGISTRY SOURCE — Hugging Face Hub ============
@@ -76,24 +80,21 @@
     const tools = /instruct|chat|tool|function|agent/.test(id) || tags.some(t => /tool|function.?call/i.test(t));
     const mm = /image-text|vision|vl-|multimodal|omni/.test(pt + ' ' + id) || tags.includes('image-text-to-text');
     const code = /code|coder|codestral|starcoder/.test(id);
+    const steps = [];
     let cls;
-    if (/feature-extraction|sentence-similarity|text-ranking|fill-mask/.test(pt)) cls = 1;
-    else if (/text-classification|token-classification|translation|summarization|question-answering/.test(pt)) cls = 2;
-    else if (gen || /gpt|llama|qwen|mistral|gemma|phi|deepseek|grok|falcon|mixtral/.test(id)) cls = 3;
-    else cls = 1;
-    if (cls === 3 && (tools || code || mm || pm >= 20)) cls = 4;
-    if (pm >= 60 || (tools && code) || /r1|reasoning|o1/.test(id)) cls = 5;
+    if (/feature-extraction|sentence-similarity|text-ranking|fill-mask/.test(pt)) { cls = 1; steps.push(`pipeline ${pt} → embeddings`); }
+    else if (/text-classification|token-classification|translation|summarization|question-answering/.test(pt)) { cls = 2; steps.push(`pipeline ${pt} → bounded`); }
+    else if (gen || /gpt|llama|qwen|mistral|gemma|phi|deepseek|grok|falcon|mixtral/.test(id)) { cls = 3; steps.push('generative → III'); }
+    else { cls = 1; steps.push(`pipeline ${pt || 'none'} → minimal`); }
+    if (cls === 3 && (tools || code || mm || pm >= 20)) { cls = 4; steps.push(`${[tools && 'tools', code && 'code', mm && 'multimodal', pm >= 20 && `${pm}B`].filter(Boolean).join('+')} → IV`); }
+    if (pm >= 60 || (tools && code) || /r1|reasoning|o1/.test(id)) { cls = 5; steps.push(`${pm >= 60 ? pm + 'B' : tools && code ? 'tools+code' : 'reasoner'} → V`); }
     const unsafe = !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
-    return { cls, unsafe };
+    if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
+    else if (unsafe) steps.push('no safetensors → restricted');
+    else steps.push('self-attested manifest');
+    return { cls, unsafe, steps };
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
-
-  /* real manifest: SHA-256 of the fetched model-card JSON */
-  async function manifestHash(m) {
-    const raw = JSON.stringify({ id: m.id, sha: m.sha || null, tags: m.tags, pt: m.pipeline_tag, gated: !!m.gated });
-    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
-    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
-  }
 
   async function loadRegistry() {
     try {
@@ -108,44 +109,65 @@
       for (const l of lists) for (const m of l) {
         if (!m.id || seen.has(m.id)) continue;
         seen.add(m.id);
-        const { cls, unsafe } = classifyModel(m);
-        models.push({ m, cls, unsafe, downloads: m.downloads || 0 });
+        const { cls, unsafe, steps } = classifyModel(m);
+        models.push({ m, cls, unsafe, steps, downloads: m.downloads || 0 });
       }
       models.sort((a, b) => b.downloads - a.downloads);
-
-      /* fill certified slots: real model whose computed class matches slot */
-      const usedSlot = new Set(), usedModel = new Set();
-      for (const a of AGENTS) {
-        if (a.revoked) continue;
-        const hit = models.find(mo => !mo.unsafe && mo.cls === a.cls && !usedModel.has(mo));
-        if (hit) {
-          usedModel.add(hit); usedSlot.add(a.i);
-          a.name = hit.m.id; a.downloads = hit.downloads;
-          a.pipeline = hit.m.pipeline_tag || ''; a.tags = hit.m.tags || [];
-          a.source = 'huggingface';
-          a.license = (hit.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
-          manifestHash(hit.m).then(h => { a.hash = h.slice(0, 8); });
-        }
-      }
-      /* below-plane slots: restricted models (gated/pickle) on matching class */
-      for (const a of AGENTS) {
-        if (!a.revoked) continue;
-        const hit = models.find(mo => mo.unsafe && mo.cls === a.cls && !usedModel.has(mo));
-        if (hit) {
-          usedModel.add(hit);
-          a.name = hit.m.id; a.downloads = hit.downloads;
-          a.pipeline = hit.m.pipeline_tag || ''; a.tags = hit.m.tags || [];
-          a.source = 'huggingface';
-          a.why = hit.m.gated ? 'restricted — license-gated' : 'unsafe serialization — no safetensors';
-          manifestHash(hit.m).then(h => { a.hash = h.slice(0, 8); });
-        }
-      }
-      rebuildRoster();
-      $('st-cert').textContent = AGENTS.filter(a => !a.revoked).length;
-      $('st-rev').textContent = AGENTS.filter(a => a.revoked).length;
-      $('st-src').textContent = 'HF';
-    } catch (e) { /* offline — synthetic registry stands */ }
+      /* 12 self-attested + 3 restricted, class spread by round-robin */
+      let i = 0;
+      const ok = models.filter(mo => !mo.unsafe), bad = models.filter(mo => mo.unsafe);
+      const byCls = c => ok.filter(mo => mo.cls === c);
+      for (let c = 1; c <= 5 && i < 12; c++) for (const mo of byCls(c).slice(0, 3)) { if (i >= 12) break; placeModel(mo, i++); }
+      for (const mo of bad.slice(0, 3)) { if (i >= 15) break; placeModel(mo, i++); }
+      refresh();
+    } catch (e) { /* offline — vacant registry stands */ }
   }
+
+  /* ============ interactive classification ============
+     User submits owner/repo → fetch card → classify → drop on the map
+     with a birth flare + evidence trail. The system does the classifying. */
+  const cxIn = $('cx-in'), cxList = $('cx-list');
+  let birthIdx = -1, birthT = 99;
+  async function classifyQuery(q) {
+    q = q.trim().replace(/^https?:\/\/(www\.)?huggingface\.co\//i, '').replace(/\/+$/, '').split('?')[0];
+    cxIn.disabled = true;
+    cxIn.value = q;
+    let m;
+    try {
+      const r = await fetch(`https://huggingface.co/api/models/${q}`);
+      if (!r.ok) throw new Error(r.status);
+      m = await r.json();
+    } catch {
+      cxIn.value = ''; cxIn.placeholder = '✗ not found on huggingface.co';
+      cxIn.disabled = false; cxIn.focus();
+      return;
+    }
+    const { cls, unsafe, steps } = classifyModel(m);
+    const rec = { m, cls, unsafe, steps, downloads: m.downloads || 0 };
+    /* prefer a vacant slot; else evict the least-downloaded of the same kind */
+    let slot = AGENTS.find(a => !a.used);
+    if (!slot) slot = AGENTS.filter(a => a.revoked === unsafe).sort((x, y) => (x.downloads || 0) - (y.downloads || 0))[0];
+    placeModel(rec, slot.i);
+    birthIdx = slot.i; birthT = 0;
+    selIdx = slot.i; syncSel();
+    refresh();
+    feedEvent(`classify ▸ ${m.id}`, `${RN[cls - 1]} · ${unsafe ? 'RESTRICTED' : 'ATTESTED'}`, unsafe ? 'deny' : 'allow');
+    cxIn.value = ''; cxIn.placeholder = `${m.id.split('/')[1]} → CLASS ${RN[cls - 1]}${unsafe ? ' · RESTRICTED' : ''}`;
+    cxIn.disabled = false;
+  }
+  cxIn.addEventListener('keydown', e => { if (e.key === 'Enter' && cxIn.value.trim()) classifyQuery(cxIn.value); });
+  let cxT;
+  cxIn.addEventListener('input', () => {
+    clearTimeout(cxT);
+    const q = cxIn.value.trim();
+    if (q.length < 3) return;
+    cxT = setTimeout(async () => {
+      try {
+        const r = await fetch(`https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=6`);
+        cxList.innerHTML = (await r.json()).map(m => `<option value="${m.id}">`).join('');
+      } catch { }
+    }, 250);
+  });
 
   /* ============ POLICY ENGINE (ported from hellovims/4c) ============ */
   const TOOL_RISK = {
@@ -208,6 +230,9 @@ uniform float P, Spike, Spin, Glitch, Threat, Gate, Press, Ekg, Lum, Ex, Ey, Fac
 uniform float Net, Ignite, Fall, Zoom, Sel, Cls;
 uniform vec2 APos[15];
 uniform float ARev[15];
+uniform float ACls[15];
+uniform float AVac[15];
+uniform float Birth, BirthT;
 uniform vec4 Edge[17];
 uniform vec2 PTR;
 
@@ -218,9 +243,8 @@ float n2(vec2 p){
 }
 float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; a*=.5; } return s; }
 
-float clsOf(int i){ return mod(float(i),5.)+1.; }
 float edgeCls(vec2 p){
-  for(int i=0;i<15;i++){ if(distance(p,APos[i])<.002) return clsOf(i); }
+  for(int i=0;i<15;i++){ if(distance(p,APos[i])<.002) return ACls[i]; }
   return 3.;
 }
 
@@ -273,11 +297,18 @@ void main(){
   /* ---- the registry ---- */
   float classInk=0.;
   for(int i=0;i<15;i++){
+    if(AVac[i]>.5) continue;
     vec2 ap=APos[i];
     float on=step(ap.x-.02,Ignite);
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
-    float cls=clsOf(i);
+    float cls=ACls[i];
+    /* birth flare — a newly classified star ignites with a shock ring */
+    if(float(i)==Birth && BirthT<4.){
+      lum+=exp(-r*22.)*max(0.,1.6-BirthT*.45);
+      lum+=smoothstep(.007,.001,abs(r-BirthT*.14))*max(0.,1.-BirthT*.28);
+      classInk=max(classInk, cls*.2*max(0.,1.2-BirthT*.3));
+    }
     float sz=.005+cls*.0032;
     float tw2=.7+.3*sin(T*(1.4+Spike*5.)+float(i)*9.);
     /* class filter — isolate the spectral band */
@@ -535,11 +566,15 @@ void main(){
   const labelsEl = document.createElement('div');
   labelsEl.style.cssText = 'position:fixed;inset:0;z-index:5;pointer-events:none';
   document.body.insertBefore(labelsEl, document.querySelector('.hud'));
-  const labels = AGENTS.map(a => {
+  /* class column markers — fixed on the spectral diagonal */
+  const labels = [1, 2, 3, 4, 5].map(c => {
     const s = document.createElement('span');
-    s.textContent = RN[a.cls - 1];
-    s.style.cssText = `position:absolute;font-size:10px;letter-spacing:.2em;color:${CLS_HEX[a.cls - 1]};
-      transform:translate(-50%,-190%);opacity:.75;text-shadow:0 0 8px ${CLS_HEX[a.cls - 1]}66`;
+    s.textContent = RN[c - 1];
+    s.dataset.c = c;
+    s.dataset.x = .08 + .80 * (c - 1) / 4;
+    s.dataset.y = EY + .345 - (c - 1) * .05;
+    s.style.cssText = `position:absolute;font-size:10px;letter-spacing:.2em;color:${CLS_HEX[c - 1]};
+      transform:translate(-50%,-190%);opacity:.75;text-shadow:0 0 8px ${CLS_HEX[c - 1]}66`;
     labelsEl.appendChild(s);
     return s;
   });
@@ -555,6 +590,12 @@ void main(){
   function rebuildRoster() {
     AGENTS.forEach((a, i) => {
       const r = rosterRows[i];
+      if (!a.used) {
+        r.className = 'ro-row vac' + (i === selIdx ? ' sel' : '');
+        r.title = 'vacant — classify a model to fill';
+        r.innerHTML = `<span class="st"></span><span class="id">· vacant ·</span><span class="cls">—</span>`;
+        return;
+      }
       r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (i === selIdx ? ' sel' : '');
       const nm = a.source === 'huggingface' ? a.name.split('/').pop() : a.name;
       r.title = a.name + (a.why ? ' — ' + a.why : '');
@@ -579,11 +620,11 @@ void main(){
         `<div><span class="k">LICENSE</span><span class="v">${a.license || '—'}</span></div>` +
         `<div><span class="k">MANIFEST</span><span class="v">${a.hash}… SHA-256</span></div>` +
         `<div><span class="k">SOURCE</span><span class="v">huggingface.co</span></div>`
-      : `<div><span class="k">DECLARED</span><span class="v">${a.tools.length} tools</span></div>` +
-        `<div><span class="k">SOURCE</span><span class="v">synthetic — no registry</span></div>`;
+      : `<div><span class="k">SOURCE</span><span class="v">synthetic — no registry</span></div>`;
     tip.innerHTML =
       `<div class="tp-t"><span>${a.name.length > 26 ? a.name.slice(0, 25) + '…' : a.name}</span><span class="tc" style="color:${CLS_HEX[a.cls - 1]}">CLASS ${RN[a.cls - 1]}</span></div>` +
       `<div><span class="k">SPECTRAL</span><span class="v">${CLS_NAME[a.cls - 1]}</span></div>` + src +
+      (a.steps ? `<div><span class="k">EVIDENCE</span><span class="v ev">${a.steps.join('<br>')}</span></div>` : '') +
       `<div><span class="k">STATUS</span><span class="v ${a.revoked ? 'rev' : 'ok'}">${a.revoked ? (a.why || 'RESTRICTED — below plane') : 'SELF-ATTESTED'}</span></div>`;
     tip.style.left = Math.min(W - 280, px + 18) + 'px';
     tip.style.top = Math.min(H - 220, Math.max(60, py - 30)) + 'px';
@@ -596,6 +637,7 @@ void main(){
     hoverIdx = -1;
     let best = .0018;
     for (const a of AGENTS) {
+      if (!a.used) continue;
       const dx = (ux - a.x) * (W / H), dy = uy - a.y;
       const d = dx * dx + dy * dy;
       if (d < best) { best = d; hoverIdx = a.i; }
@@ -620,11 +662,27 @@ void main(){
   /* feed */
   const feedRows = $('feed-rows'), feedStat = $('feed-stat'), stEval = $('st-eval');
   let evaluated = 0, clock = 21 * 3600 + 42 * 60;
+  function feedEvent(call, verdict, cls) {
+    const row = document.createElement('div');
+    row.className = 'feed-row';
+    const ts = document.createElement('span'); ts.className = 'f-t';
+    clock += 1;
+    ts.textContent = `${String(Math.floor(clock / 3600)).padStart(2, '0')}:${String(Math.floor(clock / 60) % 60).padStart(2, '0')}:${String(clock % 60).padStart(2, '0')}`;
+    const cc = document.createElement('span'); cc.className = 'f-c';
+    cc.textContent = call;
+    const vv = document.createElement('span'); vv.className = 'f-v ' + cls;
+    vv.textContent = verdict;
+    row.append(ts, cc, vv);
+    feedRows.appendChild(row);
+    while (feedRows.children.length > 4) feedRows.firstChild.remove();
+  }
   function pushRow() {
     clock += 1 + Math.floor(rng() * 8);
     const [tool, arg] = CALL_POOL[Math.floor(rng() * CALL_POOL.length)];
-    const caller = AGENTS[Math.floor(rng() * AGENTS.length)];
-    /* revoked certifications cannot execute — checked against the registry */
+    const pool = AGENTS.filter(a => a.used);
+    if (!pool.length) { setTimeout(pushRow, 1500); return; }
+    const caller = pool[Math.floor(rng() * pool.length)];
+    /* restricted models cannot execute — checked against the registry */
     const v = caller.revoked ? { d: 'DENY', rule: 'no_attestation' } : evaluate(tool, arg);
     evaluated++;
     const row = document.createElement('div');
@@ -652,20 +710,38 @@ void main(){
   }
   pushRow();
 
-  /* star uniform arrays — the sky renders the actual registry */
-  const EDGES = [];
-  for (let e = 0; e < 14; e++) EDGES.push([e, e + 1]);
-  for (let e = 14; e < 17; e++) {
-    const ai = Math.floor(fr(Math.sin(e * 127.1 + 3.7 * 311.7) * 43758.5453) * 14);
-    EDGES.push([ai, Math.floor((ai + 2 + fr(Math.sin(e * 127.1 + 7.3 * 311.7) * 43758.5453) * 10) % 15)]);
-  }
-  const flatPos = new Float32Array(30), flatRev = new Float32Array(15), flatEdge = new Float32Array(68);
+  /* star uniform arrays — the sky renders the actual registry.
+     Edges link consecutive live stars; dead slots draw nothing. */
+  const flatPos = new Float32Array(30), flatRev = new Float32Array(15),
+    flatCls = new Float32Array(15), flatVac = new Float32Array(15),
+    flatEdge = new Float32Array(68);
   function syncStars() {
-    AGENTS.forEach((a, i) => { flatPos[i * 2] = a.x; flatPos[i * 2 + 1] = a.y; flatRev[i] = a.revoked ? 1 : 0; });
-    EDGES.forEach(([a, b], e) => { flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4); });
+    AGENTS.forEach((a, i) => {
+      flatPos[i * 2] = a.x; flatPos[i * 2 + 1] = a.y;
+      flatRev[i] = a.used && a.revoked ? 1 : 0;
+      flatCls[i] = a.cls || 1;
+      flatVac[i] = a.used ? 0 : 1;
+    });
+    const live = AGENTS.filter(a => a.used).map(a => a.i);
+    flatEdge.fill(9);
+    const pairs = [];
+    for (let k = 0; k + 1 < live.length && pairs.length < 14; k++) pairs.push([live[k], live[k + 1]]);
+    for (let e = 0; e < 3 && live.length > 4; e++) {
+      const ai = live[Math.floor(fr(Math.sin(e * 127.1 + 3.7 * 311.7) * 43758.5453) * live.length)];
+      const bi = live[Math.floor(fr(Math.sin(e * 127.1 + 7.3 * 311.7) * 43758.5453) * live.length)];
+      if (ai !== bi) pairs.push([ai, bi]);
+    }
+    pairs.slice(0, 17).forEach(([a, b], e) => flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4));
+  }
+  function refresh() {
+    syncStars(); rebuildRoster();
+    $('st-reg').textContent = AGENTS.filter(a => a.used).length;
+    $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
+    $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
+    $('st-src').textContent = AGENTS.some(a => a.source === 'huggingface') ? 'HF' : '—';
   }
   syncStars();
-  loadRegistry().then(syncStars);
+  loadRegistry();
 
   /* ---- frame ---- */
   let px = 0, py = 0, pxx = 0, pyy = 0, t = 0, lastNow = performance.now();
@@ -680,6 +756,7 @@ void main(){
     const df = dt * 60;
     const dr = Math.pow(.885, df), dg = Math.pow(.9, df), db2 = Math.pow(.86, df);
     px = lerp(px, pxx, .05); py = lerp(py, pyy, .05);
+    if (birthT < 5) birthT += dt; else if (birthIdx >= 0) birthIdx = -1;
 
     /* periodic re-certification sweep — the registry re-classifies itself */
     const cyc = t % 34;
@@ -718,6 +795,10 @@ void main(){
     gl.uniform1f(u.Cls, filterCls);
     gl.uniform2fv(u.APos, flatPos);
     gl.uniform1fv(u.ARev, flatRev);
+    gl.uniform1fv(u.ACls, flatCls);
+    gl.uniform1fv(u.AVac, flatVac);
+    gl.uniform1f(u.Birth, birthIdx);
+    gl.uniform1f(u.BirthT, birthT);
     gl.uniform4fv(u.Edge, flatEdge);
     gl.uniform2f(u.PTR, px, py);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -757,12 +838,12 @@ void main(){
 
     /* class labels track zoomed positions */
     for (let i = 0; i < labels.length; i++) {
-      const a = AGENTS[i];
-      const lx = ((a.x - .5) / ZOOM + .5) * 100;
-      const ly = (.5 - (a.y - .5) / ZOOM) * 100;
-      labels[i].style.left = lx + '%';
-      labels[i].style.top = ly + '%';
-      labels[i].style.opacity = filterCls && a.cls !== filterCls ? .08 : .75;
+      const s = labels[i], c = +s.dataset.c;
+      const lx = ((+s.dataset.x - .5) / ZOOM + .5) * 100;
+      const ly = (.5 - (+s.dataset.y - .5) / ZOOM) * 100;
+      s.style.left = lx + '%';
+      s.style.top = ly + '%';
+      s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
     }
 
     requestAnimationFrame(draw);

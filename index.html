@@ -42,8 +42,14 @@
     </div>
 
     <div class="roster">
-      <div class="ro-h">AGENT REGISTRY · ERC-8004</div>
+      <div class="ro-h">MODEL REGISTRY · HUGGINGFACE.CO</div>
       <div class="ro-list" id="roster"></div>
+    </div>
+
+    <div class="cx">
+      <span class="cx-p">CLASSIFY&nbsp;▸</span>
+      <input id="cx-in" list="cx-list" placeholder="owner/model — huggingface.co" autocomplete="off" spellcheck="false">
+      <datalist id="cx-list"></datalist>
     </div>
 
     <div class="feed">
@@ -51,7 +57,7 @@
       <div class="feed-rows" id="feed-rows"></div>
     </div>
 
-    <div class="hint">HOVER A STAR TO INSPECT<br>CLASS FILTER ← LEGEND</div>
+    <div class="hint">HOVER A STAR TO INSPECT<br>TYPE A MODEL ABOVE TO CLASSIFY</div>
   </div>
 
   <div class="tip" id="tip"></div>
