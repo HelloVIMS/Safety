@@ -39,6 +39,7 @@
     'sh-strip1':       [[0,{x:-60,y:21,o:1}],[1,{x:60,y:21,o:1}]],
     'sh-class':        [[0,{x:130,o:0}],[.18,{x:0,o:1,s:1}],[.72,{x:0,o:1}],[.95,{x:-140,o:0}],[1,{x:-140,o:0}]],
     'sh-class-note':   [[0,{y:110,o:0}],[.4,{y:32,o:0}],[.52,{y:32,o:1}],[.78,{o:1}],[.92,{x:-120,o:0}],[1,{x:-120,o:0}]],
+    'sh-legend':       [[0,{x:30,o:0,y:-4}],[.34,{x:30,o:0,y:-4}],[.48,{x:30,o:1,y:-4}],[.88,{o:1}],[1,{x:36,o:0}]],
     'sh-cert':         [[0,{x:130,o:0}],[.1,{x:0,o:1}],[.42,{x:0,o:1}],[.58,{x:-140,o:0}],[1,{x:-140,o:0}]],
     'sh-cert-note':    [[0,{y:110,o:0}],[.14,{y:36,o:0}],[.24,{y:36,o:1}],[.46,{o:1}],[.56,{x:-120,o:0}],[1,{x:-120,o:0}]],
     'sh-license':      [[0,{s:.82,o:0,y:8}],[.52,{s:.82,o:0,y:8}],[.68,{s:1,o:1,y:8}],[1,{o:1,y:8}]],
@@ -225,7 +226,7 @@ precision highp float;
 uniform vec2 R;
 uniform float T;
 uniform float P, Spike, Spin, Glitch, Threat, Gate, Press, Ekg, Lum, Ex, Ey, Face, Steps;
-uniform float Net, Ignite, Fall;
+uniform float Net, Ignite, Fall, Zoom;
 uniform vec2 PTR;
 
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
@@ -235,19 +236,23 @@ float n2(vec2 p){
 }
 float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; a*=.5; } return s; }
 
-/* registered agents — the named stars above the certification plane */
+/* registered agents — the named stars above the certification plane.
+   Anchors lie on a main-sequence diagonal: class I burns top-left,
+   class V sits bottom-right — the sky is a spectral diagram */
 vec2 anchor(int i){
   float fi=float(i);
-  vec2 p=vec2(.055+.89*fract(fi*7.13+.13), Ey+.045+.30*fract(fi*3.77+.41));
+  float cls=mod(fi,5.)+1.;
+  vec2 p=vec2(.08+.80*(cls-1.)/4.+(fract(fi*7.13+.13)-.5)*.09,
+              Ey+.30-(cls-1.)*.05+(fract(fi*3.77+.41)-.5)*.10);
   /* star 4 is the one that revokes — it sinks below the plane */
   if(i==4) p.y=mix(p.y, Ey-.30, Fall*Fall);
   return p;
 }
 void edgeEnds(int e, out vec2 a, out vec2 b){
-  if(e<11){ a=anchor(e); b=anchor(e+1); }
+  if(e<14){ a=anchor(e); b=anchor(e+1); }
   else{
-    int ai=int(h2(vec2(float(e),3.7))*11.);
-    int bi=int(mod(float(ai)+2.+h2(vec2(float(e),7.3))*8.,12.));
+    int ai=int(h2(vec2(float(e),3.7))*14.);
+    int bi=int(mod(float(ai)+2.+h2(vec2(float(e),7.3))*10.,15.));
     a=anchor(ai); b=anchor(bi);
   }
 }
@@ -258,7 +263,7 @@ void main(){
   float lum = .015 + .025*h2(uv*R + floor(T*9.));
   float threat = 0.;
   vec2 cell = floor(uv*R);
-  vec2 puv = uv + PTR*vec2(.012,.008); /* pointer parallax */
+  vec2 puv = (uv-.5)/Zoom+.5 + PTR*vec2(.012,.008); /* parallax + lens */
 
   float planeOn = clamp(Ignite*2.,0.,1.);
 
@@ -266,7 +271,8 @@ void main(){
   float sh = h2(cell*1.71);
   float depth = step(Ey,uv.y); /* 1 above plane, 0 below */
   float density = mix(.045,.105,depth);
-  float starOn = step(1.-density*Ignite, sh);
+  /* the field ignites as the classification sweep passes over it */
+  float starOn = step(1.-density*Ignite, sh) * step(puv.x-.015, Ignite);
   float tw = .45+.55*sin(T*(1.2+Spike*7.)+sh*80.);
   float below = 1.-depth;
   lum += starOn*tw*mix(.3,1.,depth)*.9;
@@ -288,23 +294,39 @@ void main(){
   lum += exp(-pd*42.)*step(.72,h2(vec2(cell.x,floor(T*2.5))))*.3*planeOn;
   lum += smoothstep(Ey,1.,uv.y)*.045*planeOn;
 
+  /* ---- the sweep — classification scans left to right ---- */
+  float sx = Ignite*1.14-.04;
+  float scanVis = clamp((1.-Net)*(1.06-Ignite)*3.,0.,1.)*step(.19,Ignite);
+  lum += exp(-abs(puv.x-sx)*70.)*.55*scanVis;
+  lum += exp(-abs(puv.x-sx)*14.)*.1*scanVis;
+
+  /* ---- the graticule — the chart under the classifier ---- */
+  float chart = Ignite*(1.-Net*.6);
+  lum += (smoothstep(.48,.5,abs(fract(puv.x*10.)-.5))
+        + smoothstep(.48,.5,abs(fract(puv.y*7.)-.5)))*.05*chart;
+
   /* ---- the registry — class-bearing stars, halos, constellation edges ----
      class is written to the B channel as a spectral hue: the stamp pass
      tints each star by its risk class — the sky IS the classifier */
   float classInk=0.;
-  for(int i=0;i<12;i++){
+  for(int i=0;i<15;i++){
     vec2 ap=anchor(i);
-    float on=step(float(i)/12.,Ignite*.999+.001);
+    /* stars light when the sweep crosses them */
+    float on=step(ap.x-.02,Ignite);
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
     float cls=mod(float(i),5.)+1.;
     float sz=.005+cls*.0032;
     float tw2=.7+.3*sin(T*(1.4+Spike*5.)+float(i)*9.);
-    float core=smoothstep(sz*1.4,sz*.3,r)*tw2*on;
-    float glow=exp(-r*40.)*tw2*on*.8;
+    float core=smoothstep(sz,sz*.3,r)*tw2*on;
+    float glow=exp(-r*75.)*tw2*on*.5;
     lum+=core+glow;
+    /* ignition flare — the moment a star takes its class */
+    float rec=clamp((Ignite*1.14-.04-ap.x)*9.,0.,1.)*on;
+    lum+=exp(-r*30.)*rec*1.0;
+    lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
     /* attestation halo — mints as certification lands on this star */
-    float hon=clamp(Net*1.5-float(i)/12.,0.,1.);
+    float hon=clamp(Net*1.5-float(i)/15.,0.,1.);
     float ring=smoothstep(.0045,.0012,abs(r-.021-.002*cls))*hon*.55;
     lum+=ring;
     classInk=max(classInk,(core+glow+ring)*cls*.2);
@@ -314,12 +336,18 @@ void main(){
       threat+=Fall*smoothstep(Ey+.03,Ey-.12,ap.y)*exp(-r*26.)*1.1;
       /* the flash of the revocation event itself */
       lum+=exp(-r*20.)*Fall*exp(-Fall*4.)*8.*step(.02,Fall);
+      /* the descent leaves a dying trail up to where it held class */
+      vec2 a0=vec2(ap.x, Ey+.30-4.*.05+(fract(4.*3.77+.41)-.5)*.10);
+      float ry=(puv.y-ap.y)/max(a0.y-ap.y,1e-4);
+      float streak=step(0.,ry)*step(ry,1.)*exp(-abs(puv.x-ap.x)*asp*1.6);
+      lum+=streak*Fall*.55;
+      threat+=streak*Fall*1.1;
     }
   }
 
   /* ---- edges — capability graph made visible; calls ride the lines ---- */
-  for(int e=0;e<15;e++){
-    float pe=clamp(Net*15.-float(e),0.,1.);
+  for(int e=0;e<17;e++){
+    float pe=clamp(Net*17.-float(e),0.,1.);
     if(pe<=0.) continue;
     vec2 A,B; edgeEnds(e,A,B);
     vec2 abv=B-A; float L2=dot(abv,abv)+1e-5;
@@ -329,7 +357,7 @@ void main(){
     lum+=smoothstep(.0028,.0006,ed)*.32*Net;
     /* a live call traverses one edge per time slot; denied calls burn red */
     float slot=floor(T*Spin*2.2);
-    if(float(e)==floor(h2(vec2(slot,1.3))*15.) && Net>.4){
+    if(float(e)==floor(h2(vec2(slot,1.3))*17.) && Net>.4){
       float ft=fract(T*Spin*2.2);
       if(ft<=pe){
         vec2 cp=A+abv*ft;
@@ -602,13 +630,13 @@ void main(){
      ekg=verdict rings · lum=master gain · ey=plane height ·
      net=edges+halos · ignite=stars alight · fall=revocation sink */
   const MOODS = [
-    { p: .5,  spike: .15, spin: .6,  glitch: .12, threat: .05, gate: 0,  press: 0,   ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 0,  ignite: .2,  fall: 0 },
-    { p: .7,  spike: .4,  spin: .7,  glitch: .15, threat: .08, gate: 0,  press: 0,   ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 0,  ignite: 1,  fall: 0 },
-    { p: .8,  spike: .3,  spin: .8,  glitch: .12, threat: .1,  gate: 0,  press: 0,   ekg: 0,   lum: 1.05, ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 0 },
-    { p: .75, spike: .5,  spin: .8,  glitch: .45, threat: .5,  gate: 0,  press: 0,   ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1 },
-    { p: .8,  spike: .55, spin: .9,  glitch: .4,  threat: .5,  gate: 1,  press: .9,  ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1 },
-    { p: .8,  spike: .4,  spin: 1.4, glitch: .25, threat: .25, gate: 1,  press: .4,  ekg: .9,  lum: 1.05, ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1 },
-    { p: .6,  spike: .15, spin: .8,  glitch: .08, threat: .05, gate: 1,  press: .15, ekg: .35, lum: 1.1, ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1 },
+    { p: .5,  spike: .15, spin: .6,  glitch: .12, threat: .05, gate: 0,  press: 0,   ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 0,  ignite: .2,  fall: 0, zoom: 1.02 },
+    { p: .7,  spike: .4,  spin: .7,  glitch: .15, threat: .08, gate: 0,  press: 0,   ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 0,  ignite: 1,  fall: 0, zoom: 1.16 },
+    { p: .8,  spike: .3,  spin: .8,  glitch: .12, threat: .1,  gate: 0,  press: 0,   ekg: 0,   lum: 1.05, ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 0, zoom: 1.16 },
+    { p: .75, spike: .5,  spin: .8,  glitch: .45, threat: .5,  gate: 0,  press: 0,   ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1, zoom: 1.08 },
+    { p: .8,  spike: .55, spin: .9,  glitch: .4,  threat: .5,  gate: 1,  press: .9,  ekg: 0,   lum: 1,   ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1, zoom: 1.0 },
+    { p: .8,  spike: .4,  spin: 1.4, glitch: .25, threat: .25, gate: 1,  press: .4,  ekg: .9,  lum: 1.05, ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1, zoom: 1.0 },
+    { p: .6,  spike: .15, spin: .8,  glitch: .08, threat: .05, gate: 1,  press: .15, ekg: .35, lum: 1.1, ex: 0, ey: .34, face: 0, net: 1,  ignite: 1,  fall: 1, zoom: .9 },
   ];
   const MK = Object.keys(MOODS[0]);
   let phase = 0;
@@ -650,16 +678,15 @@ void main(){
   if (labelsEl) {
     const RN = ['I', 'II', 'III', 'IV', 'V'];
     const fr = x => x - Math.floor(x);
-    for (let i = 0; i < 12; i++) {
-      const x = .055 + .89 * fr(i * 7.13 + .13);
-      const y = .34 + .045 + .30 * fr(i * 3.77 + .41);
+    for (let i = 0; i < 15; i++) {
+      const cls = (i % 5) + 1;
+      const x = .08 + .80 * (cls - 1) / 4 + (fr(i * 7.13 + .13) - .5) * .09;
+      const y = .34 + .30 - (cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .10;
       const s = document.createElement('span');
       s.className = 'sl';
       s.textContent = RN[i % 5];
-      s.style.left = (x * 100) + '%';
-      s.style.top = ((1 - y) * 100) + '%';
       labelsEl.appendChild(s);
-      starLabels.push(s);
+      starLabels.push({ el: s, x, y });
     }
   }
 
@@ -725,13 +752,16 @@ void main(){
     /* feed wakes when the control scene is on air */
     if (!feedOn && sceneP[5] > .08) { feedOn = true; feedTick(); }
 
-    /* class labels ignite with their stars, live only in act 1 */
+    /* class labels ignite as the sweep crosses their star — act 1 only */
     if (starLabels.length) {
       const inF = clamp(sceneP[1] / .15, 0, 1);
-      const outF = clamp((1 - sceneP[1]) / .12, 0, 1);
-      for (let i = 0; i < starLabels.length; i++) {
-        const on = clamp((m.ignite * 12 - i) * 2, 0, 1);
-        starLabels[i].style.opacity = (on * inF * outF * .85).toFixed(2);
+      const outF = clamp((1 - sceneP[1]) / .12, 0, 1) * clamp(1.15 - m.net, 0, 1);
+      const z = m.zoom || 1;
+      for (const L of starLabels) {
+        const on = clamp((m.ignite + .02 - L.x) * 30, 0, 1);
+        L.el.style.opacity = (on * inF * outF * .9).toFixed(2);
+        L.el.style.left = (((L.x - .5) / z + .5) * 100).toFixed(2) + '%';
+        L.el.style.top = ((.5 - (L.y - .5) / z) * 100).toFixed(2) + '%';
       }
     }
     /* CRT power-on: the tube strikes a dot, tears to a line, opens the field */
@@ -766,6 +796,7 @@ void main(){
     gl.uniform1f(u.Net, m.net);
     gl.uniform1f(u.Ignite, m.ignite);
     gl.uniform1f(u.Fall, m.fall);
+    gl.uniform1f(u.Zoom, m.zoom);
     gl.uniform2f(u.PTR, px, py);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 

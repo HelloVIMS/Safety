@@ -208,6 +208,16 @@ em.ch-parent{background:none;-webkit-background-clip:initial;background-clip:ini
   text-shadow:0 0 8px rgba(63,217,178,.3);
 }
 
+/* ---------- class legend ---------- */
+.legend{
+  text-align:left;border:1px solid var(--line);background:rgba(2,8,7,.78);
+  padding:16px 20px;font-size:10.5px;letter-spacing:.16em;
+}
+.lg-h{color:var(--dim);margin-bottom:12px;letter-spacing:.3em;font-size:9.5px}
+.lg-row{display:flex;gap:12px;align-items:center;line-height:2.1;color:var(--ink)}
+.lg-row i{width:9px;height:9px;background:var(--c);transform:rotate(45deg);flex:none;
+  box-shadow:0 0 9px var(--c)}
+
 /* ---------- verdict feed ---------- */
 .feed{
   top:auto;bottom:max(34px,env(safe-area-inset-bottom));
@@ -254,6 +264,8 @@ em.ch-parent{background:none;-webkit-background-clip:initial;background-clip:ini
   .cue{bottom:max(34px,env(safe-area-inset-bottom))}
   .license{min-width:0;width:88vw;font-size:9.5px;padding:16px 18px}
   .feed{width:92vw;bottom:max(20px,env(safe-area-inset-bottom))}
+  .legend{display:none}
+  .sl{display:none}
   .feed-row .f-c{width:13em}
   .feed-row .f-t{width:6.5em}
 }
