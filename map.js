@@ -88,6 +88,13 @@
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
+  /* real manifest: SHA-256 of the fetched model-card JSON */
+  async function manifestHash(m) {
+    const raw = JSON.stringify({ id: m.id, sha: m.sha || null, tags: m.tags, pt: m.pipeline_tag, gated: !!m.gated });
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
   async function loadRegistry() {
     try {
       const urls = [
@@ -117,9 +124,10 @@
           a.pipeline = hit.m.pipeline_tag || ''; a.tags = hit.m.tags || [];
           a.source = 'huggingface';
           a.license = (hit.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
+          manifestHash(hit.m).then(h => { a.hash = h.slice(0, 8); });
         }
       }
-      /* revoked slots: restricted models (gated/pickle) on matching class */
+      /* below-plane slots: restricted models (gated/pickle) on matching class */
       for (const a of AGENTS) {
         if (!a.revoked) continue;
         const hit = models.find(mo => mo.unsafe && mo.cls === a.cls && !usedModel.has(mo));
@@ -128,7 +136,8 @@
           a.name = hit.m.id; a.downloads = hit.downloads;
           a.pipeline = hit.m.pipeline_tag || ''; a.tags = hit.m.tags || [];
           a.source = 'huggingface';
-          a.why = hit.m.gated ? 'gated — license not accepted' : 'pickle-only — no safetensors';
+          a.why = hit.m.gated ? 'restricted — license-gated' : 'unsafe serialization — no safetensors';
+          manifestHash(hit.m).then(h => { a.hash = h.slice(0, 8); });
         }
       }
       rebuildRoster();
@@ -568,14 +577,14 @@ void main(){
       ? `<div><span class="k">PIPELINE</span><span class="v">${a.pipeline || '—'}</span></div>` +
         `<div><span class="k">DOWNLOADS</span><span class="v">${fmtDl(a.downloads)}/mo</span></div>` +
         `<div><span class="k">LICENSE</span><span class="v">${a.license || '—'}</span></div>` +
-        `<div><span class="k">SOURCE</span><span class="v">huggingface.co</span></div>`
-      : `<div><span class="k">TOKEN</span><span class="v">ERC-8004 · 8453</span></div>` +
         `<div><span class="k">MANIFEST</span><span class="v">${a.hash}… SHA-256</span></div>` +
-        `<div><span class="k">DECLARED</span><span class="v">${a.tools.length} tools</span></div>`;
+        `<div><span class="k">SOURCE</span><span class="v">huggingface.co</span></div>`
+      : `<div><span class="k">DECLARED</span><span class="v">${a.tools.length} tools</span></div>` +
+        `<div><span class="k">SOURCE</span><span class="v">synthetic — no registry</span></div>`;
     tip.innerHTML =
       `<div class="tp-t"><span>${a.name.length > 26 ? a.name.slice(0, 25) + '…' : a.name}</span><span class="tc" style="color:${CLS_HEX[a.cls - 1]}">CLASS ${RN[a.cls - 1]}</span></div>` +
       `<div><span class="k">SPECTRAL</span><span class="v">${CLS_NAME[a.cls - 1]}</span></div>` + src +
-      `<div><span class="k">STATUS</span><span class="v ${a.revoked ? 'rev' : 'ok'}">${a.revoked ? (a.why || 'REVOKED — below plane') : 'CERTIFIED'}</span></div>`;
+      `<div><span class="k">STATUS</span><span class="v ${a.revoked ? 'rev' : 'ok'}">${a.revoked ? (a.why || 'RESTRICTED — below plane') : 'SELF-ATTESTED'}</span></div>`;
     tip.style.left = Math.min(W - 280, px + 18) + 'px';
     tip.style.top = Math.min(H - 220, Math.max(60, py - 30)) + 'px';
   }
@@ -616,7 +625,7 @@ void main(){
     const [tool, arg] = CALL_POOL[Math.floor(rng() * CALL_POOL.length)];
     const caller = AGENTS[Math.floor(rng() * AGENTS.length)];
     /* revoked certifications cannot execute — checked against the registry */
-    const v = caller.revoked ? { d: 'DENY', rule: 'cert_revoked' } : evaluate(tool, arg);
+    const v = caller.revoked ? { d: 'DENY', rule: 'no_attestation' } : evaluate(tool, arg);
     evaluated++;
     const row = document.createElement('div');
     row.className = 'feed-row';
