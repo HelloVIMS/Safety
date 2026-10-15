@@ -590,29 +590,11 @@ void main(){
     });
   }
 
-  const tip = $('tip');
   let selIdx = -1, hoverIdx = -1;
   let mx = -1, my = -1;
 
   function syncSel() {
     rosterRows.forEach((r, i) => r.classList.toggle('sel', i === selIdx));
-  }
-
-  function showTip(a, px, py) {
-    tip.style.display = 'block';
-    const src = a.source === 'huggingface'
-      ? `<div><span class="k">PIPELINE</span><span class="v">${a.pipeline || '—'}</span></div>` +
-        `<div><span class="k">DOWNLOADS</span><span class="v">${fmtDl(a.downloads)}/mo</span></div>` +
-        `<div><span class="k">LICENSE</span><span class="v">${a.license || '—'}</span></div>` +
-        `<div><span class="k">MANIFEST</span><span class="v">${a.hash}… SHA-256</span></div>`
-      : `<div><span class="k">SOURCE</span><span class="v">synthetic — no registry</span></div>`;
-    tip.innerHTML =
-      `<div class="tp-t"><span>${a.name.length > 26 ? a.name.slice(0, 25) + '…' : a.name}</span><span class="tc" style="color:${CLS_HEX[a.cls - 1]}">CLASS ${RN[a.cls - 1]}</span></div>` +
-      `<div><span class="k">SPECTRAL</span><span class="v">${CLS_NAME[a.cls - 1]}</span></div>` + src +
-      (a.steps ? `<div><span class="k">EVIDENCE</span><span class="v ev">${a.steps.join('<br>')}</span></div>` : '') +
-      `<div><span class="k">STATUS</span><span class="v ${a.revoked ? 'rev' : 'ok'}">${a.revoked ? (a.why || 'RESTRICTED — below plane') : 'SELF-ATTESTED'}</span></div>`;
-    tip.style.left = Math.min(W - 280, px + 18) + 'px';
-    tip.style.top = Math.min(H - 220, Math.max(60, py - 30)) + 'px';
   }
 
   addEventListener('pointermove', e => {
@@ -627,9 +609,6 @@ void main(){
       const d = dx * dx + dy * dy;
       if (d < best) { best = d; hoverIdx = a.i; }
     }
-    const act = hoverIdx >= 0 ? hoverIdx : selIdx;
-    if (act >= 0 && AGENTS[act].used) showTip(AGENTS[act], e.clientX, e.clientY);
-    else tip.style.display = 'none';
     document.body.style.cursor = dragging ? 'grabbing' : (hoverIdx >= 0 ? 'crosshair' : 'grab');
   }, { passive: true });
 
