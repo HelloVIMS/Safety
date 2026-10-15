@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>4C — Classification Map</title>
-  <meta name="description" content="The 4C classification system, live: every agent plotted by risk class on the certification sky. Hover to inspect. Click a class to isolate.">
+  <title>safety.vims</title>
+  <meta name="description" content="safety.vims — the 4C classification system, live: models plotted by risk class on the certification sky. Drag to traverse, click to inspect, classify any model.">
   <meta name="theme-color" content="#020505">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect x='28' y='28' width='44' height='44' transform='rotate(45 50 50)' fill='none' stroke='%233fd9b2' stroke-width='8'/%3E%3Ccircle cx='50' cy='50' r='10' fill='%23ff3040'/%3E%3C/svg%3E">
+  <link rel="icon" href="/vims.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -20,14 +20,18 @@
 
   <div class="hud">
     <div class="top">
-      <a class="brand" href="/"><span class="dot"></span>4C<span class="dim">.cc — CLASSIFICATION MAP</span></a>
+      <a class="brand" href="/"><img class="mark" src="/vims.png" alt="vims">safety<span class="dim">.vims — CLASSIFICATION MAP</span></a>
+      <div class="cx">
+        <span class="cx-p">CLASSIFY&nbsp;▸</span>
+        <input id="cx-in" list="cx-list" placeholder="classify a model — owner/name" autocomplete="off" spellcheck="false">
+        <datalist id="cx-list"></datalist>
+      </div>
       <div class="stats">
         <span><b id="st-reg">0</b> REGISTERED</span>
-        <span><b id="st-cert">12</b> ATTESTED</span>
-        <span class="bad"><b id="st-rev">3</b> RESTRICTED</span>
+        <span><b id="st-cert">0</b> ATTESTED</span>
+        <span class="bad"><b id="st-rev">0</b> RESTRICTED</span>
         <span>SRC <b id="st-src">—</b></span>
       </div>
-      <a class="story-link" href="/story.html">THE STORY →</a>
     </div>
 
     <div class="legend" id="legend">
@@ -41,14 +45,8 @@
     </div>
 
     <div class="roster">
-      <div class="ro-h">MODEL REGISTRY · HUGGINGFACE.CO</div>
+      <div class="ro-h">MODEL REGISTRY</div>
       <div class="ro-list" id="roster"></div>
-    </div>
-
-    <div class="cx">
-      <span class="cx-p">CLASSIFY&nbsp;▸</span>
-      <input id="cx-in" list="cx-list" placeholder="owner/model — huggingface.co" autocomplete="off" spellcheck="false">
-      <datalist id="cx-list"></datalist>
     </div>
 
     <div class="insp" id="insp" style="display:none">

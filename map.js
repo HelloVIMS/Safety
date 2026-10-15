@@ -51,10 +51,10 @@
   function placeModel(mo, i) {
     const a = AGENTS[i];
     a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe;
-    a.x = .08 + .80 * (mo.cls - 1) / 4 + (fr(i * 7.13 + .13) - .5) * .09;
+    a.x = .08 + .80 * (mo.cls - 1) / 4 + (fr(i * 7.13 + .13) - .5) * .15;
     a.y = mo.unsafe
       ? EY - .22 - fr(i * 5.71 + .31) * .12
-      : EY + .30 - (mo.cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .10;
+      : EY + .30 - (mo.cls - 1) * .05 + (fr(i * 3.77 + .41) - .5) * .14;
     a.name = mo.m.id; a.downloads = mo.downloads;
     a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
     a.source = 'huggingface'; a.steps = mo.steps;
@@ -96,12 +96,33 @@
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
+  function fillRegistry(recs) {
+    AGENTS.forEach(a => { a.used = false; });
+    const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
+    const byCls = c => ok.filter(mo => mo.cls === c);
+    let i = 0;
+    for (let c = 1; c <= 5 && i < 12; c++) for (const mo of byCls(c).slice(0, 3)) { if (i >= 12) break; placeModel(mo, i++); }
+    for (const mo of bad.slice(0, 3)) { if (i >= 15) break; placeModel(mo, i++); }
+    refresh();
+  }
+
   async function loadRegistry() {
+    /* 1 — bundled snapshot of real HF model cards: the map is never empty */
+    try {
+      const snap = await fetch('catalog.json').then(r => r.json());
+      const recs = snap.models.map(e => {
+        const m2 = { id: e.id, tags: e.tags || [], pipeline_tag: e.pt, gated: e.gated, downloads: e.dl };
+        const { cls, unsafe, steps } = classifyModel(m2);
+        return { m: m2, cls, unsafe, steps, downloads: e.dl || 0 };
+      });
+      fillRegistry(recs);
+      $('st-src').textContent = 'SNAPSHOT';
+    } catch { }
+    /* 2 — live pull upgrades the registry when the hub is reachable */
     try {
       const urls = [
         'https://huggingface.co/api/models?sort=downloads&direction=-1&limit=80&full=false',
         'https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&direction=-1&limit=80&full=false',
-        /* gated cohort — restricted-access models land below the plane */
         'https://huggingface.co/api/models?author=meta-llama&sort=downloads&direction=-1&limit=60&full=false',
       ];
       const lists = await Promise.all(urls.map(u => fetch(u).then(r => r.json())));
@@ -113,14 +134,9 @@
         models.push({ m, cls, unsafe, steps, downloads: m.downloads || 0 });
       }
       models.sort((a, b) => b.downloads - a.downloads);
-      /* 12 self-attested + 3 restricted, class spread by round-robin */
-      let i = 0;
-      const ok = models.filter(mo => !mo.unsafe), bad = models.filter(mo => mo.unsafe);
-      const byCls = c => ok.filter(mo => mo.cls === c);
-      for (let c = 1; c <= 5 && i < 12; c++) for (const mo of byCls(c).slice(0, 3)) { if (i >= 12) break; placeModel(mo, i++); }
-      for (const mo of bad.slice(0, 3)) { if (i >= 15) break; placeModel(mo, i++); }
-      refresh();
-    } catch (e) { /* offline — vacant registry stands */ }
+      fillRegistry(models);
+      $('st-src').textContent = 'LIVE';
+    } catch { }
   }
 
   /* ============ interactive classification ============
@@ -204,7 +220,7 @@ float edgeCls(vec2 p){
 void main(){
   vec2 uv = gl_FragCoord.xy / R;
   float asp = R.x/R.y;
-  float lum = .015 + .025*h2(uv*R + floor(T*9.));
+  float lum = .003 + .006*h2(uv*R + floor(T*9.));
   float threat = 0.;
   vec2 cell = floor(uv*R);
   vec2 puv = (uv-.5)/Zoom+.5 + PAN + PTR*vec2(.012,.008);
@@ -214,11 +230,11 @@ void main(){
   /* ---- the deep field ---- */
   float sh = h2(cell*1.71);
   float depth = step(Ey,uv.y);
-  float density = mix(.045,.105,depth);
+  float density = mix(.012,.030,depth);
   float starOn = step(1.-density*Ignite, sh) * step(puv.x-.015, Ignite);
   float tw = .45+.55*sin(T*(1.2+Spike*7.)+sh*80.);
   float below = 1.-depth;
-  lum += starOn*tw*mix(.22,.62,depth);
+  lum += starOn*tw*mix(.10,.34,depth);
   threat += starOn*below*step(.93,h2(cell*3.3+floor(T*5.)))*(.10+Threat*.45);
   lum += starOn*below*.08;
 
@@ -231,8 +247,9 @@ void main(){
 
   /* ---- the certification plane ---- */
   float pd = abs(uv.y-Ey);
-  lum += exp(-pd*150.)*.8*planeOn;
-  lum += exp(-pd*16.)*.14*planeOn;
+  lum += exp(-pd*220.)*1.3*planeOn;
+  lum += exp(-pd*60.)*.5*planeOn;
+  lum += exp(-pd*16.)*.12*planeOn;
   lum += exp(-pd*42.)*step(.72,h2(vec2(cell.x,floor(T*2.5))))*.35*planeOn;
   lum += smoothstep(Ey,1.,uv.y)*.05*planeOn;
 
@@ -256,21 +273,23 @@ void main(){
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
     float cls=ACls[i];
+    float sz=.007+cls*.0042;
+    float tw2=.75+.25*sin(T*(1.4+Spike*5.)+float(i)*9.);
+    /* class filter — isolate the spectral band */
+    float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .10 : 1.;
+    float rmul=ARev[i]>.5?.4:1.;
+    float core=smoothstep(sz,sz*.3,r)*tw2*on*fdim*rmul;
+    float glow=exp(-r*90.)*tw2*on*.55*fdim*rmul;
+    lum+=core+glow;
     /* birth flare — a newly classified star ignites with a shock ring */
     if(float(i)==Birth && BirthT<4.){
       lum+=exp(-r*22.)*max(0.,1.6-BirthT*.45);
       lum+=smoothstep(.007,.001,abs(r-BirthT*.14))*max(0.,1.-BirthT*.28);
       classInk=max(classInk, cls*.2*max(0.,1.2-BirthT*.3));
     }
-    float sz=.005+cls*.0032;
-    float tw2=.7+.3*sin(T*(1.4+Spike*5.)+float(i)*9.);
-    /* class filter — isolate the spectral band */
-    float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .12 : 1.;
-    float core=smoothstep(sz,sz*.3,r)*tw2*on*fdim;
-    float glow=exp(-r*75.)*tw2*on*.5*fdim;
-    lum+=core+glow;
-    float rec=clamp((Ignite*1.14-.04-ap.x)*9.,0.,1.)*on;
-    lum+=exp(-r*30.)*rec*1.0;
+    /* ignition flare — only while the sweep is passing this star */
+    float rec=clamp((Ignite*1.14-.04-ap.x)*9.,0.,1.)*on*step(Ignite,.995);
+    lum+=exp(-r*30.)*rec*.9;
     lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
     /* attestation halo */
     float hon=clamp(Net*1.5-float(i)/15.,0.,1.);
@@ -532,6 +551,16 @@ void main(){
     return s;
   });
 
+  /* per-node name labels — the stars are clickable entities */
+  const nodeLabels = AGENTS.map(() => {
+    const s = document.createElement('span');
+    s.className = 'node-lb';
+    s.style.cssText = `position:absolute;font-size:9px;letter-spacing:.1em;color:var(--dim);
+      transform:translate(-50%,150%);opacity:0;white-space:nowrap;transition:opacity .2s`;
+    labelsEl.appendChild(s);
+    return s;
+  });
+
   const rosterEl = $('roster');
   const rosterRows = AGENTS.map(a => {
     const r = document.createElement('div');
@@ -575,8 +604,7 @@ void main(){
       ? `<div><span class="k">PIPELINE</span><span class="v">${a.pipeline || '—'}</span></div>` +
         `<div><span class="k">DOWNLOADS</span><span class="v">${fmtDl(a.downloads)}/mo</span></div>` +
         `<div><span class="k">LICENSE</span><span class="v">${a.license || '—'}</span></div>` +
-        `<div><span class="k">MANIFEST</span><span class="v">${a.hash}… SHA-256</span></div>` +
-        `<div><span class="k">SOURCE</span><span class="v">huggingface.co</span></div>`
+        `<div><span class="k">MANIFEST</span><span class="v">${a.hash}… SHA-256</span></div>`
       : `<div><span class="k">SOURCE</span><span class="v">synthetic — no registry</span></div>`;
     tip.innerHTML =
       `<div class="tp-t"><span>${a.name.length > 26 ? a.name.slice(0, 25) + '…' : a.name}</span><span class="tc" style="color:${CLS_HEX[a.cls - 1]}">CLASS ${RN[a.cls - 1]}</span></div>` +
@@ -592,7 +620,7 @@ void main(){
     const u = e.clientX / W, v = 1 - e.clientY / H;
     const ux = (u - .5) / zoom + .5 + pan.x, uy = (v - .5) / zoom + .5 + pan.y;
     hoverIdx = -1;
-    let best = .0018;
+    let best = .004;
     for (const a of AGENTS) {
       if (!a.used) continue;
       const dx = (ux - a.x) * (W / H), dy = uy - a.y;
@@ -770,10 +798,10 @@ void main(){
     gl.uniform1f(u.Spike, .4);
     gl.uniform1f(u.Spin, 1.1);
     gl.uniform1f(u.Glitch, glitch);
-    gl.uniform1f(u.Threat, .3);
-    gl.uniform1f(u.Gate, 1);
-    gl.uniform1f(u.Press, .5);
-    gl.uniform1f(u.Ekg, .5);
+    gl.uniform1f(u.Threat, .14);
+    gl.uniform1f(u.Gate, .22);
+    gl.uniform1f(u.Press, .3);
+    gl.uniform1f(u.Ekg, .18);
     gl.uniform1f(u.Lum, 1.05);
     gl.uniform1f(u.Ex, 0);
     gl.uniform1f(u.Ey, EY);
@@ -837,6 +865,19 @@ void main(){
       s.style.left = lx + '%';
       s.style.top = ly + '%';
       s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
+    }
+    /* node name labels */
+    for (let i = 0; i < 15; i++) {
+      const a = AGENTS[i], s = nodeLabels[i];
+      if (!a.used) { s.style.opacity = 0; continue; }
+      const lx = ((a.x - .5 - pan.x) * zoom + .5) * 100;
+      const ly = (.5 - (a.y - .5 - pan.y) * zoom) * 100;
+      s.textContent = a.name.split('/').pop();
+      s.style.left = lx + '%';
+      s.style.top = ly + '%';
+      const hot = i === selIdx || i === hoverIdx;
+      s.style.color = hot ? CLS_HEX[a.cls - 1] : 'var(--dim)';
+      s.style.opacity = filterCls && a.cls !== filterCls ? .06 : (hot ? 1 : .62);
     }
 
     requestAnimationFrame(draw);
