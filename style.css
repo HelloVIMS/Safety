@@ -200,6 +200,14 @@ em.ch-parent{background:none;-webkit-background-clip:initial;background-clip:ini
 .license.revoked{border-color:var(--red);box-shadow:0 0 44px rgba(255,48,64,.2)}
 .license.revoked .lc-status{color:var(--red)}
 
+/* ---------- star class labels ---------- */
+.starlabels{position:absolute;inset:0;pointer-events:none}
+.sl{
+  position:absolute;font-size:10px;letter-spacing:.25em;color:var(--dim);
+  transform:translate(-50%,-190%);opacity:0;
+  text-shadow:0 0 8px rgba(63,217,178,.3);
+}
+
 /* ---------- verdict feed ---------- */
 .feed{
   top:auto;bottom:max(34px,env(safe-area-inset-bottom));

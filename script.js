@@ -288,7 +288,10 @@ void main(){
   lum += exp(-pd*42.)*step(.72,h2(vec2(cell.x,floor(T*2.5))))*.3*planeOn;
   lum += smoothstep(Ey,1.,uv.y)*.045*planeOn;
 
-  /* ---- the registry — class-bearing stars, halos, constellation edges ---- */
+  /* ---- the registry — class-bearing stars, halos, constellation edges ----
+     class is written to the B channel as a spectral hue: the stamp pass
+     tints each star by its risk class — the sky IS the classifier */
+  float classInk=0.;
   for(int i=0;i<12;i++){
     vec2 ap=anchor(i);
     float on=step(float(i)/12.,Ignite*.999+.001);
@@ -302,7 +305,9 @@ void main(){
     lum+=core+glow;
     /* attestation halo — mints as certification lands on this star */
     float hon=clamp(Net*1.5-float(i)/12.,0.,1.);
-    lum+=smoothstep(.0045,.0012,abs(r-.021-.002*cls))*hon*.55;
+    float ring=smoothstep(.0045,.0012,abs(r-.021-.002*cls))*hon*.55;
+    lum+=ring;
+    classInk=max(classInk,(core+glow+ring)*cls*.2);
     /* the revoked star burns red, then dims into the deep */
     if(i==4){
       threat+=(core+glow)*Fall*1.5;
@@ -371,7 +376,7 @@ void main(){
 
   /* sanitize: one NaN cell poisons the phosphor buffer forever */
   if(lum!=lum) lum=0.; if(threat!=threat) threat=0.;
-  gl_FragColor=vec4(min(lum*Lum,1.),min(threat,1.),0.,1.);
+  gl_FragColor=vec4(min(lum*Lum,1.),min(threat,1.),min(classInk,1.),1.);
 }`;
 
   /* ---- pass 2: stamp one glyph per cell + phosphor persistence ---- */
@@ -383,6 +388,12 @@ uniform float T, Glitch, CellAsp, WordOn;
 uniform vec3 Decay;
 uniform vec4 WRect;
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+/* spectral classification — risk class reads as star color:
+   I ice-blue · II teal · III bone · IV gold · V deep orange */
+vec3 spec(float h){
+  vec3 a=vec3(.6,.82,1.),b=vec3(.55,1.,.9),c=vec3(1.,.98,.9),d=vec3(1.,.7,.35),e=vec3(1.,.42,.18);
+  return h<.3?mix(a,b,h/.3):h<.55?mix(b,c,(h-.3)/.25):h<.8?mix(c,d,(h-.55)/.25):mix(d,e,(h-.8)/.2);
+}
 void main(){
   vec2 uv = gl_FragCoord.xy / R;
   vec2 cell = floor(uv*C);
@@ -399,6 +410,7 @@ void main(){
 
   vec3 deep=vec3(.12,.45,.4), foamc=vec3(.82,1.,.93), red=vec3(1.,.18,.24);
   vec3 tint=mix(deep*.55,foamc,clamp(lum*1.5-.12,0.,1.));
+  if(data.b>.02) tint=mix(tint,spec(data.b),.85);
   vec3 col=tint*ink;
   col=mix(col,red*ink*1.15,clamp(thr*1.7,0.,1.));
   col+=red*thr*.06;
@@ -632,6 +644,25 @@ void main(){
     return { top: scenes[i].docTop - sy, bottom: scenes[i].docTop - sy + el.offsetHeight };
   }
 
+  /* ---- class labels — DOM mirrors of the shader's anchor() positions ---- */
+  const labelsEl = $('starlabels');
+  const starLabels = [];
+  if (labelsEl) {
+    const RN = ['I', 'II', 'III', 'IV', 'V'];
+    const fr = x => x - Math.floor(x);
+    for (let i = 0; i < 12; i++) {
+      const x = .055 + .89 * fr(i * 7.13 + .13);
+      const y = .34 + .045 + .30 * fr(i * 3.77 + .41);
+      const s = document.createElement('span');
+      s.className = 'sl';
+      s.textContent = RN[i % 5];
+      s.style.left = (x * 100) + '%';
+      s.style.top = ((1 - y) * 100) + '%';
+      labelsEl.appendChild(s);
+      starLabels.push(s);
+    }
+  }
+
   /* ---- verdict feed: real policy eval on a live call stream ---- */
   const feedRows = $('feed-rows'), feedStat = $('feed-stat');
   let feedOn = false, evaluated = 0, clock = 900;
@@ -693,6 +724,16 @@ void main(){
     }
     /* feed wakes when the control scene is on air */
     if (!feedOn && sceneP[5] > .08) { feedOn = true; feedTick(); }
+
+    /* class labels ignite with their stars, live only in act 1 */
+    if (starLabels.length) {
+      const inF = clamp(sceneP[1] / .15, 0, 1);
+      const outF = clamp((1 - sceneP[1]) / .12, 0, 1);
+      for (let i = 0; i < starLabels.length; i++) {
+        const on = clamp((m.ignite * 12 - i) * 2, 0, 1);
+        starLabels[i].style.opacity = (on * inF * outF * .85).toFixed(2);
+      }
+    }
     /* CRT power-on: the tube strikes a dot, tears to a line, opens the field */
     const bootE = 1 - Math.pow(1 - Math.min(1, t / 1.2), 3);
     const collapse = capture ? 0 : Math.max(transit, 1 - bootE);
