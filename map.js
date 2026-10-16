@@ -222,13 +222,19 @@ uniform vec2 R;
 uniform float T;
 uniform float P, Spike, Spin, Glitch, Threat, Gate, Press, Ekg, Lum, Ex, Ey, Face, Steps;
 uniform float Net, Ignite, Fall, Zoom, Sel, Cls;
-uniform vec2 APos[128];
-uniform float ARev[128];
-uniform float ACls[128];
-uniform float AVac[128];
+uniform sampler2D Nodes;
 uniform float Birth, BirthT;
-uniform vec4 Edge[48];
 uniform vec2 PTR, PAN;
+
+/* registry texture — 512x1 RGBA8. 2 texels per node:
+   A: x,y as 16-bit (x/1.2, y/0.8).  B: cls*51, revoked, vacant, -.
+   texels 256+: edges as node-index pairs (255 = empty). */
+vec4 nTex(int i){ return texture2D(Nodes, vec2((float(i)+.5)/512., .5)); }
+vec2 nPos(vec4 t){
+  return vec2((t.r*65280.+t.g*255.)/65535.*1.2,
+              (t.b*65280.+t.a*255.)/65535.*.8);
+}
+float nCls(vec4 t){ return floor(t.r*5.+.5); }
 
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float n2(vec2 p){
@@ -236,11 +242,6 @@ float n2(vec2 p){
   return mix(mix(h2(i),h2(i+vec2(1.,0.)),f.x),mix(h2(i+vec2(0.,1.)),h2(i+vec2(1.,1.)),f.x),f.y);
 }
 float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; a*=.5; } return s; }
-
-float edgeCls(vec2 p){
-  for(int i=0;i<128;i++){ if(distance(p,APos[i])<.002) return ACls[i]; }
-  return 3.;
-}
 
 void main(){
   vec2 uv = gl_FragCoord.xy / R;
@@ -292,18 +293,19 @@ void main(){
   /* ---- the registry ---- */
   float classInk=0.;
   for(int i=0;i<128;i++){
-    if(AVac[i]>.5) continue;
-    if(abs(puv.x-APos[i].x)>.10||abs(puv.y-APos[i].y)>.10) continue;
-    vec2 ap=APos[i];
+    vec4 na=nTex(i*2), nb=nTex(i*2+1);
+    if(nb.b>.5) continue;
+    vec2 ap=nPos(na);
+    if(abs(puv.x-ap.x)>.10||abs(puv.y-ap.y)>.10) continue;
     float on=step(ap.x-.02,Ignite);
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
-    float cls=ACls[i];
+    float cls=nCls(nb);
     float sz=.007+cls*.0042;
     float tw2=.75+.25*sin(T*(1.4+Spike*5.)+float(i)*9.);
     /* class filter — isolate the spectral band */
     float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .10 : 1.;
-    float rmul=ARev[i]>.5?.4:1.;
+    float rmul=nb.g>.5?.4:1.;
     float core=smoothstep(sz,sz*.3,r)*tw2*on*fdim*rmul;
     float glow=exp(-r*90.)*tw2*on*.55*fdim*rmul;
     lum+=core+glow;
@@ -329,7 +331,7 @@ void main(){
       classInk=max(classInk,.16);
     }
     /* revoked stars burn red below the plane, trailing toward it */
-    if(ARev[i]>.5){
+    if(nb.g>.5){
       threat+=(core+glow)*.5;
       threat+=exp(-r*34.)*.22;
       float ry=clamp((puv.y-ap.y)/max(Ey-ap.y,1e-4),0.,1.);
@@ -343,14 +345,16 @@ void main(){
   for(int e=0;e<48;e++){
     float pe=clamp(Net*4.-float(e)*.08,0.,1.);
     if(pe<=0.) continue;
-    vec4 Eg=Edge[e];
-    vec2 A=Eg.xy, B=Eg.zw;
+    vec4 et=nTex(256+e);
+    int ia=int(floor(et.r*255.+.5)), ib=int(floor(et.g*255.+.5));
+    if(ia>127) continue;
+    vec2 A=nPos(nTex(ia*2)), B=nPos(nTex(ib*2));
     vec2 abv=B-A; float L2=dot(abv,abv)+1e-5;
     float tt=clamp(dot(puv-A,abv)/L2,0.,pe);
     vec2 pp=A+abv*tt;
     float ed=length((puv-pp)*vec2(asp,1.));
     lum+=smoothstep(.0028,.0006,ed)*.32*Net;
-    classInk=max(classInk, smoothstep(.0028,.0006,ed)*Net*(edgeCls(A)*.08+edgeCls(B)*.08));
+    classInk=max(classInk, smoothstep(.0028,.0006,ed)*Net*(nCls(nTex(ia*2+1))*.08+nCls(nTex(ib*2+1))*.08));
     float slot=floor(T*Spin*2.2);
     if(float(e)==floor(h2(vec2(slot,1.3))*48.) && Net>.4){
       float ft=fract(T*Spin*2.2);
@@ -734,28 +738,41 @@ void main(){
       r.classList.toggle('off', filterCls && +r.dataset.c !== filterCls));
   });
 
-  /* star uniform arrays — the sky renders the actual registry.
-     Edges link consecutive live stars; dead slots draw nothing. */
-  const flatPos = new Float32Array(256), flatRev = new Float32Array(128),
-    flatCls = new Float32Array(128), flatVac = new Float32Array(128),
-    flatEdge = new Float32Array(192);
+  /* registry texture — the sky renders actual node data, not uniform
+     arrays. Uniform-vector ceilings can't cap the node count. */
+  const nodeData = new Uint8Array(512 * 4), nodeTex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, nodeTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
   function syncStars() {
     AGENTS.forEach((a, i) => {
-      flatPos[i * 2] = a.x; flatPos[i * 2 + 1] = a.y;
-      flatRev[i] = a.used && a.revoked ? 1 : 0;
-      flatCls[i] = a.cls || 1;
-      flatVac[i] = a.used ? 0 : 1;
+      const o = i * 8;
+      const x16 = Math.min(65535, Math.max(0, Math.round(a.x / 1.2 * 65535)));
+      const y16 = Math.min(65535, Math.max(0, Math.round(a.y / .8 * 65535)));
+      nodeData[o] = x16 >> 8; nodeData[o + 1] = x16 & 255;
+      nodeData[o + 2] = y16 >> 8; nodeData[o + 3] = y16 & 255;
+      nodeData[o + 4] = Math.round((a.cls || 1) * 51);
+      nodeData[o + 5] = a.used && a.revoked ? 255 : 0;
+      nodeData[o + 6] = a.used ? 0 : 255;
+      nodeData[o + 7] = 0;
     });
+    nodeData.fill(255, 256 * 4);
     const live = AGENTS.filter(a => a.used).map(a => a.i);
-    flatEdge.fill(9);
     const pairs = [];
-    for (let k = 0; k + 1 < live.length && pairs.length < 44; k++) pairs.push([live[k], live[k + 2]]);
+    for (let k = 0; k + 2 < live.length && pairs.length < 44; k++) pairs.push([live[k], live[k + 2]]);
     for (let e = 0; e < 4 && live.length > 8; e++) {
       const ai = live[Math.floor(fr(Math.sin(e * 127.1 + 3.7 * 311.7) * 43758.5453) * live.length)];
       const bi = live[Math.floor(fr(Math.sin(e * 127.1 + 7.3 * 311.7) * 43758.5453) * live.length)];
       if (ai !== bi) pairs.push([ai, bi]);
     }
-    pairs.slice(0, 48).forEach(([a, b], e) => flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4));
+    pairs.slice(0, 48).forEach(([a, b], e) => {
+      nodeData[(256 + e) * 4] = a; nodeData[(256 + e) * 4 + 1] = b;
+    });
+    gl.bindTexture(gl.TEXTURE_2D, nodeTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
   }
   let registryTotal = 0;
   function refresh() {
@@ -825,13 +842,10 @@ void main(){
     gl.uniform2f(u.PAN, pan.x, pan.y);
     gl.uniform1f(u.Sel, selIdx);
     gl.uniform1f(u.Cls, filterCls);
-    gl.uniform2fv(u.APos, flatPos);
-    gl.uniform1fv(u.ARev, flatRev);
-    gl.uniform1fv(u.ACls, flatCls);
-    gl.uniform1fv(u.AVac, flatVac);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, nodeTex);
+    gl.uniform1i(u.Nodes, 3);
     gl.uniform1f(u.Birth, birthIdx);
     gl.uniform1f(u.BirthT, birthT);
-    gl.uniform4fv(u.Edge, flatEdge);
     gl.uniform2f(u.PTR, px, py);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
