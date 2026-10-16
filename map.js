@@ -40,7 +40,7 @@
      not the slot. Empty slots draw nothing. */
   const EY = .34, ZOOM = 1.05;
   const AGENTS = [];
-  for (let i = 0; i < 24; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
+  for (let i = 0; i < 128; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
 
   async function manifestHash(m) {
     const raw = JSON.stringify({ id: m.id, sha: m.sha || null, tags: m.tags, pt: m.pipeline_tag, gated: !!m.gated });
@@ -108,15 +108,16 @@
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
   function fillRegistry(recs) {
+    registryTotal = recs.length;
     AGENTS.forEach(a => { a.used = false; });
     const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
     const byCls = c => ok.filter(mo => mo.cls === c);
     let i = 0;
-    for (let c = 1; c <= 5 && i < 20; c++) for (const mo of byCls(c).slice(0, 4)) { if (i >= 20) break; placeModel(mo, i++); }
-    /* backfill: leftover attested slots take next-ranked models of any class */
+    for (let c = 1; c <= 5 && i < 40; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 40) break; placeModel(mo, i++); }
+    /* backfill to the node ceiling — every fetched model registers regardless */
     const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
-    for (const mo of ok) { if (i >= 20) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
-    for (const mo of bad.slice(0, 4)) { if (i >= 24) break; placeModel(mo, i++); }
+    for (const mo of ok) { if (i >= 124) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
+    for (const mo of bad.slice(0, 4)) { if (i >= 128) break; placeModel(mo, i++); }
     refresh();
   }
 
@@ -135,9 +136,15 @@
     /* 2 — live pull upgrades the registry when the hub is reachable */
     try {
       const urls = [
-        'https://huggingface.co/api/models?sort=downloads&direction=-1&limit=80&full=false',
-        'https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&direction=-1&limit=80&full=false',
+        'https://huggingface.co/api/models?sort=downloads&direction=-1&limit=100&full=false',
+        'https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&direction=-1&limit=100&full=false',
+        'https://huggingface.co/api/models?pipeline_tag=text2text-generation&sort=downloads&direction=-1&limit=60&full=false',
+        'https://huggingface.co/api/models?pipeline_tag=image-text-to-text&sort=downloads&direction=-1&limit=60&full=false',
+        'https://huggingface.co/api/models?pipeline_tag=automatic-speech-recognition&sort=downloads&direction=-1&limit=40&full=false',
         'https://huggingface.co/api/models?author=meta-llama&sort=downloads&direction=-1&limit=60&full=false',
+        'https://huggingface.co/api/models?author=deepseek-ai&sort=downloads&direction=-1&limit=40&full=false',
+        'https://huggingface.co/api/models?author=mistralai&sort=downloads&direction=-1&limit=40&full=false',
+        'https://huggingface.co/api/models?author=nvidia&sort=downloads&direction=-1&limit=40&full=false',
       ];
       const lists = await Promise.all(urls.map(u => fetch(u).then(r => r.json())));
       const seen = new Set(), models = [];
@@ -215,12 +222,12 @@ uniform vec2 R;
 uniform float T;
 uniform float P, Spike, Spin, Glitch, Threat, Gate, Press, Ekg, Lum, Ex, Ey, Face, Steps;
 uniform float Net, Ignite, Fall, Zoom, Sel, Cls;
-uniform vec2 APos[24];
-uniform float ARev[24];
-uniform float ACls[24];
-uniform float AVac[24];
+uniform vec2 APos[128];
+uniform float ARev[128];
+uniform float ACls[128];
+uniform float AVac[128];
 uniform float Birth, BirthT;
-uniform vec4 Edge[26];
+uniform vec4 Edge[48];
 uniform vec2 PTR, PAN;
 
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
@@ -231,7 +238,7 @@ float n2(vec2 p){
 float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; a*=.5; } return s; }
 
 float edgeCls(vec2 p){
-  for(int i=0;i<24;i++){ if(distance(p,APos[i])<.002) return ACls[i]; }
+  for(int i=0;i<128;i++){ if(distance(p,APos[i])<.002) return ACls[i]; }
   return 3.;
 }
 
@@ -284,8 +291,9 @@ void main(){
 
   /* ---- the registry ---- */
   float classInk=0.;
-  for(int i=0;i<24;i++){
+  for(int i=0;i<128;i++){
     if(AVac[i]>.5) continue;
+    if(abs(puv.x-APos[i].x)>.10||abs(puv.y-APos[i].y)>.10) continue;
     vec2 ap=APos[i];
     float on=step(ap.x-.02,Ignite);
     vec2 dv=(puv-ap)*vec2(asp,1.);
@@ -310,7 +318,7 @@ void main(){
     lum+=exp(-r*30.)*rec*.9;
     lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
     /* attestation halo */
-    float hon=clamp(Net*1.5-float(i)/24.,0.,1.);
+    float hon=clamp(Net*1.5-float(i)/128.,0.,1.);
     float ring=smoothstep(.0045,.0012,abs(r-.021-.002*cls))*hon*.75*fdim;
     lum+=ring;
     classInk=max(classInk,(core+glow+ring)*cls*.2);
@@ -332,8 +340,8 @@ void main(){
   }
 
   /* ---- edges + call traffic ---- */
-  for(int e=0;e<17;e++){
-    float pe=clamp(Net*17.-float(e),0.,1.);
+  for(int e=0;e<48;e++){
+    float pe=clamp(Net*4.-float(e)*.08,0.,1.);
     if(pe<=0.) continue;
     vec4 Eg=Edge[e];
     vec2 A=Eg.xy, B=Eg.zw;
@@ -344,7 +352,7 @@ void main(){
     lum+=smoothstep(.0028,.0006,ed)*.32*Net;
     classInk=max(classInk, smoothstep(.0028,.0006,ed)*Net*(edgeCls(A)*.08+edgeCls(B)*.08));
     float slot=floor(T*Spin*2.2);
-    if(float(e)==floor(h2(vec2(slot,1.3))*17.) && Net>.4){
+    if(float(e)==floor(h2(vec2(slot,1.3))*48.) && Net>.4){
       float ft=fract(T*Spin*2.2);
       if(ft<=pe){
         vec2 cp=A+abv*ft;
@@ -728,9 +736,9 @@ void main(){
 
   /* star uniform arrays — the sky renders the actual registry.
      Edges link consecutive live stars; dead slots draw nothing. */
-  const flatPos = new Float32Array(48), flatRev = new Float32Array(24),
-    flatCls = new Float32Array(24), flatVac = new Float32Array(24),
-    flatEdge = new Float32Array(104);
+  const flatPos = new Float32Array(256), flatRev = new Float32Array(128),
+    flatCls = new Float32Array(128), flatVac = new Float32Array(128),
+    flatEdge = new Float32Array(192);
   function syncStars() {
     AGENTS.forEach((a, i) => {
       flatPos[i * 2] = a.x; flatPos[i * 2 + 1] = a.y;
@@ -741,17 +749,18 @@ void main(){
     const live = AGENTS.filter(a => a.used).map(a => a.i);
     flatEdge.fill(9);
     const pairs = [];
-    for (let k = 0; k + 1 < live.length && pairs.length < 22; k++) pairs.push([live[k], live[k + 1]]);
-    for (let e = 0; e < 4 && live.length > 4; e++) {
+    for (let k = 0; k + 1 < live.length && pairs.length < 44; k++) pairs.push([live[k], live[k + 2]]);
+    for (let e = 0; e < 4 && live.length > 8; e++) {
       const ai = live[Math.floor(fr(Math.sin(e * 127.1 + 3.7 * 311.7) * 43758.5453) * live.length)];
       const bi = live[Math.floor(fr(Math.sin(e * 127.1 + 7.3 * 311.7) * 43758.5453) * live.length)];
       if (ai !== bi) pairs.push([ai, bi]);
     }
-    pairs.slice(0, 26).forEach(([a, b], e) => flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4));
+    pairs.slice(0, 48).forEach(([a, b], e) => flatEdge.set([AGENTS[a].x, AGENTS[a].y, AGENTS[b].x, AGENTS[b].y], e * 4));
   }
+  let registryTotal = 0;
   function refresh() {
     syncStars(); rebuildRoster();
-    $('st-reg').textContent = AGENTS.filter(a => a.used).length;
+    $('st-reg').textContent = registryTotal || AGENTS.filter(a => a.used).length;
     $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
     document.querySelectorAll('#legend .lg-row .n').forEach(n => {
@@ -869,7 +878,7 @@ void main(){
       s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
     }
     /* node name labels */
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 128; i++) {
       const a = AGENTS[i], s = nodeLabels[i];
       if (!a.used) { s.style.opacity = 0; continue; }
       const lx = ((a.x - .5 - pan.x) * zoom + .5) * 100;
@@ -878,8 +887,9 @@ void main(){
       s.style.left = lx + '%';
       s.style.top = ly + '%';
       const hot = i === selIdx || i === hoverIdx;
+      const vis = hot ? 1 : i < 24 ? .62 : clamp((zoom - .95) / .5, 0, 1) * .6;
       s.style.color = hot ? CLS_HEX[a.cls - 1] : 'var(--dim)';
-      s.style.opacity = filterCls && a.cls !== filterCls ? .06 : (hot ? 1 : .62);
+      s.style.opacity = filterCls && a.cls !== filterCls ? .05 : vis;
     }
 
     requestAnimationFrame(draw);
