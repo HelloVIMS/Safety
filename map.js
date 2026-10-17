@@ -1128,7 +1128,29 @@ void main(){
       (ggufs.length > 1 ? `<div class="in-note">${ggufs.length} GGUF quantizations — command fetches the smallest; pick one below.</div>` : '') +
       `<div class="in-sec">WEIGHT FILES · sha256 (LFS)</div>` +
       (weights.length ? weights.sort((x, y) => x.path.localeCompare(y.path, undefined, { numeric: true })).map(f => row(f, wCut)).join('') : '<div class="in-note">no weight files in this repo</div>') +
-      (rest.length ? `<details class="in-more"><summary>CONFIG · TOKENIZER · OTHER (${rest.length})</summary>${rest.map(f => row(f)).join('')}</details>` : '');
+      (rest.length ? `<details class="in-more"><summary>CONFIG · TOKENIZER · OTHER (${rest.length})</summary>${rest.map(f => row(f)).join('')}</details>` : '') +
+      serveSection(a, weights);
+  }
+  /* ---- serving on a VIMS GPU node — same estimate chat.vims.com's Deploy panel uses ---- */
+  const GPU_CLASSES = [
+    ['RTX 4000 Ada', 20, 'DigitalOcean · Linode'], ['L4', 24, 'Google Cloud · AWS'], ['A10G', 24, 'AWS'],
+    ['A100', 40, 'Google Cloud'], ['L40S / RTX 6000 Ada', 48, 'DigitalOcean · AWS'], ['A100', 80, 'Google Cloud'],
+    ['H100', 80, 'DigitalOcean'], ['H200', 141, 'DigitalOcean'],
+  ];
+  const vramNeeded = bytes => Math.ceil(bytes / 1e9 * 1.15 + 2);
+  function serveSection(a, weights) {
+    const st = weights.filter(f => /\.safetensors$/i.test(f.path)).reduce((n, f) => n + (f.size || 0), 0);
+    const why = a.gated ? 'gated — needs a Hugging Face token on the node, which deploys don\'t send yet'
+      : !st ? 'no safetensors weights — vLLM serves safetensors repos only' : null;
+    if (why) return `<div class="in-sec">SERVE ON A VIMS NODE</div><div class="in-note bad">not deployable: ${esc(why)}</div>`;
+    const need = vramNeeded(st), fit = GPU_CLASSES.filter(([, v]) => need <= v * 0.9);
+    return `<div class="in-sec">SERVE ON A VIMS NODE</div>` +
+      `<div class="in-row"><span>GPU MEMORY</span><b>≈ ${need} GB</b></div>` +
+      (fit.length
+        ? `<div class="in-row"><span>SMALLEST FIT</span><b>${esc(fit[0][0])} ${fit[0][1]} GB · ${esc(fit[0][2])}</b></div>` +
+          `<a class="in-deploy" href="https://chat.vims.com/?deploy=${encodeURIComponent('hf:' + a.name)}" target="_blank" rel="noopener">DEPLOY ON VIMS ↗</a>` +
+          `<div class="in-note">opens chat.vims.com Deploy: a GPU server on your own cloud account, controlled by your identity; chat with the model when it's serving.</div>`
+        : `<div class="in-note bad">needs more than one GPU's memory — single-GPU nodes can't serve it yet.</div>`);
   }
   async function toggleFiles(a) {
     const el = $('in-files'), btn = $('in-dl');
