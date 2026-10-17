@@ -34,9 +34,11 @@
   const CLS_NAME = CLASSES.map(c => c.name);
   const CLS_HEX = CLASSES.map(c => c.hex);
   const NCLS = CLASSES.length, ACTIVE = CLASSES.filter(c => !c.reserved).length;
-  /* band geometry on the x-axis: class k occupies [BX0+(k-1)·BW, BX0+k·BW] */
-  const BX0 = .04, BW = .092;
-  const bandX = (cls, frac) => BX0 + (cls - 1 + clamp(frac, .1, .9)) * BW;
+  /* band geometry on the x-axis (layoutBands): active classes share the plot by
+     membership (√n, floored so an empty band stays visible); reserved bands are narrow */
+  const SPAN0 = .04, SPAN1 = .96, RSV_W = .042;
+  const BAND = CLASSES.map((_, i) => ({ x0: SPAN0 + i * (SPAN1 - SPAN0) / CLASSES.length, w: (SPAN1 - SPAN0) / CLASSES.length }));
+  const bandX = (cls, frac) => BAND[cls - 1].x0 + BAND[cls - 1].w * (.1 + .8 * clamp(frac, 0, 1));
   /* score → position inside its band for I–V (score thresholds as before) */
   const SCORE_EDGES = [0, .15, .35, .58, .78, 1.0001];
   const TOOLS_BY_CLASS = [
@@ -61,6 +63,8 @@
   const EY = .34, ZOOM = 1.05;
   const AGENTS = [];
   const NODES = 192, API_SLOTS = 64;
+  /* honoured everywhere motion is decorative: no sweep, glitch, roll, twinkle or flare */
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   for (let i = 0; i < NODES; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
 
   async function manifestHash(m) {
@@ -73,8 +77,8 @@
     const a = AGENTS[i];
     a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe; a.score = mo.score;
     /* x = the class band, positioned inside it by score (I–V) or evidence strength (VI+); y set by layoutAdoption() */
-    a.x = bandX(mo.cls, bandFrac(mo)) + (fr(i * 7.13 + .13) - .5) * .02;
-    a.enriched = false;
+    a.frac = bandFrac(mo);
+    a.enriched = false; a.bench = undefined; a.hfProviders = undefined; a.tokenQuote = undefined; a.flops = 0;
     a.name = mo.m.id; a.downloads = mo.downloads || 0; a.likes = mo.m.likes || 0;
     a.api = !!mo.api;
     if (a.api) {
@@ -258,6 +262,7 @@
         const m2 = { id: e.id, tags: e.tags || [], pipeline_tag: e.pt, gated: e.gated, downloads: e.dl };
         return { m: m2, ...classifyModel(m2), downloads: e.dl || 0 };
       }).concat((snap.api || []).map(apiRec));
+      loadNvidia(snap.nvidia || [], snap.nvidia_snapshot);
       fillRegistry(recs);
       $('st-src').textContent = 'SNAPSHOT';
     } catch { }
@@ -472,24 +477,22 @@
 
   const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
 
+  /* PASS 1 — the ambient sky at terminal-cell resolution: sparse dust, the
+     certification plane, a faint glyph aura where each star sits, the edges.
+     The stars themselves are drawn crisp by the point pass (VS_PTS/FS_PTS). */
   const FS_SCENE = `
 precision highp float;
 uniform vec2 R;
-uniform float T;
-uniform float P, Spike, Spin, Glitch, Threat, Gate, Press, Ekg, Lum, Ex, Ey, Face, Steps;
-uniform float Net, Ignite, Fall, Zoom, Sel, Cls;
+uniform float T, Glitch, Lum, Ey, Net, Ignite, Zoom, Cls, VX, NS;
 uniform sampler2D Nodes;
-uniform float Birth, BirthT;
 uniform vec2 PTR, PAN;
-uniform float VX, NS;
 
-/* registry texture — 1024x1 RGBA8. 2 texels per node (192 nodes):
-   A: x,y as 16-bit (x/1.2, y/0.8).  B: cls*25 (1..10), revoked, vacant, -.
-   texels 512+: edges as node-index pairs (255 = empty). */
-vec4 nTex(int i){ return texture2D(Nodes, vec2((float(i)+.5)/1024., .5)); }
+/* registry texture — 512x1 RGBA8. 2 texels per node (192 nodes):
+   A: x,y as 16-bit (x/1.2, y/1.2 — the API strip sits above y=.8).  B: cls*25 (1..10), revoked, vacant, -. */
+vec4 nTex(int i){ return texture2D(Nodes, vec2((float(i)+.5)/512., .5)); }
 vec2 nPos(vec4 t){
   return vec2((t.r*65280.+t.g*255.)/65535.*1.2,
-              (t.b*65280.+t.a*255.)/65535.*.8);
+              (t.b*65280.+t.a*255.)/65535.*1.2);
 }
 float nCls(vec4 t){ return floor(t.r*255./25.+.5); }
 
@@ -503,163 +506,110 @@ float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; 
 void main(){
   vec2 uv = gl_FragCoord.xy / R;
   float asp = R.x/R.y/VX;
-  float lum = .003 + .006*h2(uv*R + floor(T*9.));
-  float threat = 0.;
   vec2 cell = floor(uv*R);
   vec2 puv = (uv-.5)*vec2(VX,1.)/Zoom+.5 + PAN + PTR*vec2(.012,.008);
+  float lum = .002 + .003*h2(uv*R + floor(T*9.));
+  float threat = 0.;
+  float above = step(Ey,puv.y);
 
-  float planeOn = clamp(Ignite*2.,0.,1.);
-
-  /* ---- the deep field ---- */
+  /* deep field — sparse, dim, mostly above the plane */
   float sh = h2(cell*1.71);
-  float depth = step(Ey,puv.y);
-  float density = mix(.012,.030,depth);
-  float starOn = step(1.-density*Ignite, sh) * step(puv.x-.015, Ignite);
-  float tw = .45+.55*sin(T*(1.2+Spike*7.)+sh*80.);
-  float below = 1.-depth;
-  lum += starOn*tw*mix(.10,.34,depth);
-  threat += starOn*below*step(.93,h2(cell*3.3+floor(T*5.)))*(.10+Threat*.45);
-  lum += starOn*below*.08;
+  float starOn = step(1.-mix(.004,.012,above)*Ignite, sh);
+  lum += starOn*(.6+.4*sin(T*1.3+sh*80.))*mix(.05,.13,above);
 
-  /* ---- the abyss ---- */
+  /* below the plane: a faint red haze, nothing more */
   float ab = smoothstep(Ey,Ey-.3,puv.y);
-  float mass = fbm2(puv*vec2(5.,2.6)+vec2(T*.06*Spin,0.));
-  lum += ab*mass*.07;
-  threat += ab*mass*(.07+Threat*.28);
-  threat += ab*step(.975,h2(cell+floor(T*6.)))*Threat*.45;
+  float mass = fbm2(puv*vec2(5.,2.6)+vec2(T*.05,0.));
+  lum += ab*mass*.02;
+  threat += ab*mass*.05;
 
-  /* ---- the certification plane ---- */
+  /* the certification plane — a thin line with a soft glow */
   float pd = abs(puv.y-Ey)*Zoom;
-  lum += exp(-pd*220.)*1.3*planeOn;
-  lum += exp(-pd*60.)*.5*planeOn;
-  lum += exp(-pd*16.)*.12*planeOn;
-  lum += exp(-pd*42.)*step(.72,h2(vec2(cell.x,floor(T*2.5))))*.35*planeOn;
-  lum += smoothstep(Ey,1.,puv.y)*.05*planeOn;
+  lum += (exp(-pd*70.)*.1 + exp(-pd*20.)*.03)*clamp(Ignite*2.,0.,1.)*smoothstep(.0,.04,puv.x)*smoothstep(1.,.96,puv.x);
 
-  /* ---- the sweep ---- */
+  /* the re-classification sweep */
   float sx = Ignite*1.14-.04;
   float scanVis = clamp((1.-Net)*(1.06-Ignite)*3.,0.,1.)*step(.19,Ignite);
-  lum += exp(-abs(puv.x-sx)*70.)*.55*scanVis;
-  lum += exp(-abs(puv.x-sx)*14.)*.1*scanVis;
+  lum += (exp(-abs(puv.x-sx)*70.)*.3 + exp(-abs(puv.x-sx)*14.)*.05)*scanVis;
 
-  /* ---- the graticule ---- */
-  float chart = .7;
-  lum += (smoothstep(.48,.5,abs(fract(puv.x*10.)-.5))
-        + smoothstep(.48,.5,abs(fract(puv.y*7.)-.5)))*.035*chart;
+  /* graticule — barely there */
+  lum += (smoothstep(.485,.5,abs(fract(puv.x*10.)-.5)) + smoothstep(.485,.5,abs(fract(puv.y*7.)-.5)))*.012;
 
-  /* ---- the registry ---- */
-  float classInk=0.;
-  float zk=pow(Zoom,-.75), NZ=NS*zk;
+  /* star auras — the glyph field warms around each star */
+  float classInk = 0., auraSum = 0.;
+  float NZ = NS*pow(Zoom,-.75);
   for(int i=0;i<192;i++){
     vec4 na=nTex(i*2), nb=nTex(i*2+1);
     if(nb.b>.5) continue;
     vec2 ap=nPos(na);
-    if(abs(puv.x-ap.x)>.10||abs(puv.y-ap.y)>.10) continue;
-    float on=step(ap.x-.02,Ignite);
-    vec2 dv=(puv-ap)*vec2(asp,1.);
-    float r=length(dv);
+    if(abs(puv.x-ap.x)>.06||abs(puv.y-ap.y)>.06) continue;
     float cls=nCls(nb);
-    float sz=(.007+min(cls,6.)*.0042)*NZ;
-    float tw2=.75+.25*sin(T*(1.4+Spike*5.)+float(i)*9.);
-    /* class filter — isolate the spectral band */
-    float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .10 : 1.;
-    float rmul=nb.g>.5?.4:1.;
-    float core=smoothstep(sz,sz*.3,r)*tw2*on*fdim*rmul*.78;
-    float glow=exp(-r*90./NZ)*tw2*on*.55*fdim*rmul;
-    lum+=core+glow;
-    /* birth flare — a newly classified star ignites with a shock ring */
-    if(float(i)==Birth && BirthT<4.){
-      lum+=exp(-r*22.)*max(0.,1.6-BirthT*.45);
-      lum+=smoothstep(.007,.001,abs(r-BirthT*.14))*max(0.,1.-BirthT*.28);
-      classInk=max(classInk, cls*.1*step(.05,1.2-BirthT*.3));
-    }
-    /* ignition flare — only while the sweep is passing this star */
-    float rec=clamp((Ignite*1.14-.04-ap.x)*9.,0.,1.)*on*step(Ignite,.995);
-    lum+=exp(-r*30.)*rec*.9;
-    lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
-    /* attestation halo */
-    float hon=clamp(Net*1.5-float(i)/192.,0.,1.);
-    float ring=smoothstep(.0045*zk,.0012*zk,abs(r-(.021+.002*cls)*NZ))*hon*.75*fdim;
-    lum+=ring;
-    classInk=max(classInk,step(.06,core+glow+ring)*cls*.1);
-    /* selected star — the inspector's ring */
-    if(float(i)==Sel){
-      lum+=smoothstep(.009*zk,.002*zk,abs(r-.042*zk))*(.55+.35*sin(T*5.));
-      lum+=smoothstep(.006*zk,.001*zk,abs(r-.055*zk))*(.3+.2*sin(T*5.-1.));
-      classInk=max(classInk,cls*.1);
-    }
-    /* revoked stars burn red below the plane, trailing toward it */
-    if(nb.g>.5){
-      threat+=(core+glow)*.5;
-      threat+=exp(-r*34./zk)*.22;
-      float ry=clamp((puv.y-ap.y)/max(Ey-ap.y,1e-4),0.,1.);
-      float streak=step(0.,ry)*step(ry,1.)*exp(-abs(puv.x-ap.x)*asp*40.);
-      lum+=streak*.3;
-      threat+=streak*.18;
-    }
+    float r=length((puv-ap)*vec2(asp,1.));
+    float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .12 : 1.;
+    float aura=exp(-r*70./NZ)*.07*fdim*step(ap.x-.02,Ignite);
+    auraSum+=aura;
+    classInk=max(classInk,step(.02,aura)*cls*.1);
+    if(nb.g>.5) threat+=aura*.4;
   }
 
-  /* ---- edges + call traffic ---- */
-  for(int e=0;e<48;e++){
-    float pe=clamp(Net*4.-float(e)*.08,0.,1.);
-    if(pe<=0.) continue;
-    vec4 et=nTex(512+e);
-    int ia=int(floor(et.r*255.+.5)), ib=int(floor(et.g*255.+.5));
-    if(ia>191) continue;
-    vec2 A=nPos(nTex(ia*2)), B=nPos(nTex(ib*2));
-    vec2 abv=B-A; float L2=dot(abv,abv)+1e-5;
-    float tt=clamp(dot(puv-A,abv)/L2,0.,pe);
-    vec2 pp=A+abv*tt;
-    float ed=length((puv-pp)*vec2(asp,1.));
-    lum+=smoothstep(.0028,.0006,ed)*.32*Net;
-    classInk=max(classInk, step(.4,smoothstep(.0028,.0006,ed)*Net)*max(nCls(nTex(ia*2+1)),nCls(nTex(ib*2+1)))*.1);
-    float slot=floor(T*Spin*2.2);
-    if(float(e)==floor(h2(vec2(slot,1.3))*48.) && Net>.4){
-      float ft=fract(T*Spin*2.2);
-      if(ft<=pe){
-        vec2 cp=A+abv*ft;
-        float cd=length((puv-cp)*vec2(asp,1.));
-        float deny=step(.8,h2(vec2(slot,9.1)));
-        lum+=exp(-cd*55.)*1.5;
-        threat+=exp(-cd*55.)*deny*.9;
-      }
-    }
-  }
+  lum += min(auraSum,.11);   // a cluster warms the field, never fills it
 
-  /* ---- the membrane ---- */
-  vec2 C=vec2(.5,Ey+.185); vec2 ER=vec2(.40,.245);
-  float er=length((puv-C)/ER);
-  float memb=abs(er-1.);
-  lum+=smoothstep(.02,.002,memb)*Gate*(.45+.25*sin(T*2.2));
-  float segAng=atan((puv-C).y/ER.y,(puv-C).x/ER.x);
-  lum+=smoothstep(.015,.003,memb)*Gate*step(.8,h2(vec2(floor(segAng*14.),floor(T*.5))))*.6;
-
-  /* ---- anomalies ---- */
-  for(int k=0;k<3;k++){
-    float fk=float(k);
-    vec2 dir=vec2(cos(T*(.37+fk*.13)*Spin+fk*2.1),sin(T*(.51+fk*.11)*Spin+fk*1.7));
-    float rad=.55+.42*sin(T*.62+fk*2.4);
-    vec2 xp=C+dir*ER*rad;
-    float bd=length((puv-xp)*vec2(asp,1.));
-    float blob=smoothstep(.045,.012,bd);
-    lum+=blob*.14*Gate;
-    threat+=blob*(.35+.65*(.5+.5*sin(T*8.+fk*3.)))*Gate;
-    float touch=smoothstep(.8,.97,rad)*Gate;
-    lum+=touch*exp(-memb*26.)*Press*.9;
-    threat+=touch*Press*.8;
-  }
-
-  /* ---- verdict rings ---- */
-  float rr=length((puv-C)*vec2(asp,1.));
-  lum+=pow(.5+.5*sin(rr*52.-T*8.),5.)*exp(-rr*2.4)*Ekg*.5;
-  threat+=pow(.5+.5*sin(rr*52.-T*8.+2.4),8.)*exp(-rr*2.6)*Ekg*Threat*.8;
-
-  /* ---- decrypt band ---- */
-  float db=exp(-abs(uv.y-.5)*24.)*Glitch;
-  lum += db*step(.93,h2(vec2(cell.x,floor(T*7.))))*.6;
+  /* decrypt band — only while the sweep glitches */
+  lum += exp(-abs(uv.y-.5)*24.)*Glitch*step(.93,h2(vec2(cell.x,floor(T*7.))))*.5;
 
   if(lum!=lum) lum=0.; if(threat!=threat) threat=0.;
   gl_FragColor=vec4(min(lum*Lum,1.),min(threat,1.),min(classInk,1.),1.);
+}`;
+
+  /* POINT PASS — the stars, crisp at full resolution over the composited sky.
+     Shape says openness: filled = open weights, hollow ring = API-only,
+     red-rimmed = restricted. Size grows with class; rings mark hover/selection. */
+  const VS_PTS = `
+attribute vec2 aPos;
+attribute vec4 aDat;   // class 1..10, kind (0 open · 1 API-only · 2 restricted), state (0 · 1 hover · 2 selected), flare 0..1
+uniform float Zoom, VX, Dpr, MaxPt, Cls, T;
+uniform vec2 PAN, PTR;
+uniform vec3 Pal[10];
+varying vec3 vCol;
+varying vec4 vDat;
+varying float vDim;
+void main(){
+  vec2 uv = (aPos - .5 - PAN - PTR*vec2(.012,.008)) * vec2(Zoom/VX, Zoom) + .5;
+  gl_Position = vec4(uv*2.-1., 0., 1.);
+  float cls = aDat.x;
+  float core = (2.6 + min(cls,7.)*.55) * Dpr * clamp(pow(Zoom,.3), .85, 1.5);
+  core *= aDat.z > 1.5 ? 1.3 : aDat.z > .5 ? 1.15 : 1.;
+  core *= 1. + aDat.w*1.6;
+  gl_PointSize = min(core*6., MaxPt);
+  int k = int(cls + .5) - 1;
+  vec3 c = vec3(1.);
+  for (int i = 0; i < 10; i++) if (i == k) c = Pal[i];
+  vCol = c;
+  vDat = aDat;
+  vDim = (Cls > .5 && abs(cls - Cls) > .4) ? .12 : 1.;
+}`;
+  const FS_PTS = `
+precision highp float;
+uniform float T;
+varying vec3 vCol;
+varying vec4 vDat;
+varying float vDim;
+void main(){
+  float r = length(gl_PointCoord*2.-1.)*6.;   // in core radii (the quad spans 6)
+  float kind = vDat.y, st = vDat.z, fl = vDat.w;
+  vec3 red = vec3(1.,.25,.3);
+  float body = kind > .5 && kind < 1.5
+    ? smoothstep(.32,.08,abs(r-.82)) + smoothstep(.5,0.,r)*.25          // API-only: hollow ring
+    : smoothstep(1.,.72,r);                                               // open weights: filled disc
+  float rim = kind > 1.5 ? smoothstep(.22,.05,abs(r-1.3)) : 0.;          // restricted: red rim
+  float halo = exp(-r*1.15)*.5*(1.-smoothstep(4.,6.,r));
+  float hov = st > .5 && st < 1.5 ? smoothstep(.2,.05,abs(r-2.2))*.7 : 0.;
+  float sel = st > 1.5 ? smoothstep(.22,.06,abs(r-2.6))*(.7+.3*sin(T*5.)) + smoothstep(.16,.04,abs(r-3.5))*.35 : 0.;
+  float flare = fl > 0. ? smoothstep(.3,.0,abs(r-(1.-fl)*5.5))*fl : 0.;
+  vec3 c = kind > 1.5 ? mix(vCol, red, .35) : vCol;
+  vec3 col = c*(body + halo) + red*rim + vec3(1.)*(hov + sel)*.9 + c*flare;
+  float a = clamp(body + halo*.85 + rim + hov + sel + flare, 0., 1.) * vDim;
+  gl_FragColor = vec4(col*vDim, a);
 }`;
 
   const FS_STAMP = `
@@ -742,9 +692,9 @@ void main(){
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
     return s;
   }
-  function program(fs) {
+  function program(fs, vs = VS) {
     const p = gl.createProgram();
-    gl.attachShader(p, shader(gl.VERTEX_SHADER, VS));
+    gl.attachShader(p, shader(gl.VERTEX_SHADER, vs));
     gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fs));
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
@@ -817,7 +767,7 @@ void main(){
   }
 
   /* GL resources — rebuilt from scratch on context restore */
-  let glOK = false, atlasTex, quad, nodeTex, progScene, progStamp, progDisp, tScene, fbA, fbB;
+  let glOK = false, atlasTex, quad, nodeTex, progScene, progStamp, progDisp, progPts, ptsBuf, maxPt = 64, tScene, fbA, fbB;
   function allocTargets() {
     const pw = Math.round(W * dpr), ph = Math.round(H * dpr);
     const nc = Math.max(32, Math.round(pw / (CELL_W * dpr))), nr = Math.max(20, Math.round(ph / (CELL_H * dpr)));
@@ -835,6 +785,7 @@ void main(){
       progScene = program(FS_SCENE);
       progStamp = program(FS_STAMP);
       progDisp = program(FS_DISPLAY);
+      progPts = program(FS_PTS, VS_PTS);
     } catch (e) {
       console.error('[safety.vims] shader:', e.message);
       return;
@@ -843,6 +794,8 @@ void main(){
     quad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    ptsBuf = gl.createBuffer();
+    maxPt = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64;
     nodeTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, nodeTex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -873,10 +826,10 @@ void main(){
     const c = idx + 1, s = document.createElement('button');
     s.type = 'button';
     s.className = 'cls-mark' + (k.reserved ? ' rsv' : '');
-    s.innerHTML = `${k.rn}${k.reserved ? '<small>RESERVED</small>' : ''}`;
+    s.textContent = k.rn;
     s.title = `Class ${k.rn} · ${k.name} — criteria`;
     s.dataset.c = c;
-    s.dataset.x = BX0 + (c - .5) * BW;
+    s.dataset.x = BAND[idx].x0 + BAND[idx].w / 2;
     s.dataset.y = EY + .76;
     s.style.cssText = `--c:${k.hex}`;
     s.addEventListener('click', () => openClassInfo(c));
@@ -887,10 +840,18 @@ void main(){
   const bandEdges = [ACTIVE, ACTIVE + 1, ACTIVE + 2, NCLS].map(k => {
     const d = document.createElement('div');
     d.className = 'band-edge' + (k === NCLS ? ' end' : '');
-    d.dataset.x = BX0 + k * BW;
+    d.dataset.x = k < NCLS ? BAND[k].x0 : SPAN1;
+    d.dataset.k = k;
     labelsEl.appendChild(d);
     return d;
   });
+  const rsvCap = document.createElement('span');
+  rsvCap.className = 'rsv-cap';
+  rsvCap.textContent = 'RESERVED';
+  labelsEl.appendChild(rsvCap);
+  const planeLine = document.createElement('div');
+  planeLine.className = 'plane-line';
+  labelsEl.appendChild(planeLine);
   const beyond = document.createElement('span');
   beyond.className = 'beyond';
   beyond.textContent = 'BEYOND THE SCALE · UNCLASSIFIED';
@@ -898,10 +859,10 @@ void main(){
 
   /* axis captions — what the two dimensions of the sky mean */
   const axes = [
-    ['CAPABILITY SCORE →', .91, EY + .025, 'translate(-100%,-50%)'],
-    ['↑ ADOPTION · download rank', .02, EY + .26, 'translate(0,-50%) rotate(-90deg) translate(0,-100%)'],
-    ['CERTIFICATION PLANE', .02, EY + .032, 'translate(0,-50%)'],
-    ['API-ONLY · NEWEST ↑', .02, EY + .65, 'translate(0,-50%)'],
+    ['CLASS · CAPABILITY →', SPAN1 - .005, EY - .018, 'translate(-100%,-50%)'],
+    ['DOWNLOADS ↑', .008, EY + .28, 'rotate(-90deg) translate(-50%,0)'],
+    ['CERTIFICATION PLANE', SPAN0 + .002, EY + .014, 'translate(0,-50%)'],
+    ['API · NEWEST ↑', .008, EY + .65, 'rotate(-90deg) translate(-50%,0)'],
   ].map(([txt, x, y, tf]) => {
     const s = document.createElement('span');
     s.textContent = txt; s.dataset.x = x; s.dataset.y = y; s.dataset.tf = tf;
@@ -923,7 +884,8 @@ void main(){
 
   const rosterEl = $('roster');
   const rosterRows = AGENTS.map(a => {
-    const r = document.createElement('div');
+    const r = document.createElement('button');
+    r.type = 'button';
     r.className = 'ro-row' + (a.revoked ? ' rev' : '');
     r.onclick = () => { if (a.used) select(selIdx === a.i ? -1 : a.i, true); };
     rosterEl.appendChild(r);
@@ -963,7 +925,7 @@ void main(){
       rosterEmpty.hidden = shown > 0;
       rosterEmpty.textContent = k.reserved ? `Class ${k.rn} is reserved — no known entity.` : `No model on the map is class ${k.rn}.`;
     } else {
-      rosterTitle.textContent = `REGISTRY · ON MAP · ${shown}`;
+      rosterTitle.textContent = `ON MAP · ${shown}`;
       rosterEmpty.hidden = true;
     }
   }
@@ -1011,7 +973,7 @@ void main(){
     const live = AGENTS.filter(a => a.used);
     if (!live.length || userCam) return;
     const xs = live.map(a => a.x), ys = live.map(a => a.y);
-    const x0 = Math.min(...xs, BX0 - .01), x1 = Math.max(...xs, BX0 + NCLS * BW + .01), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .84);
+    const x0 = Math.min(...xs, SPAN0 - .045), x1 = Math.max(...xs, SPAN1 + .015), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .84);
     const topH = document.querySelector('.top').getBoundingClientRect().bottom;
     let L = 24, R = 24, B = mobile ? 70 : 40;
     const T = topH + 24;
@@ -1019,9 +981,9 @@ void main(){
     if (!mobile && !document.body.classList.contains('bare')) for (const el of [$('legend'), document.querySelector('.roster')]) {
       const r = el.getBoundingClientRect();
       if (!r.width) continue;
-      if (r.height >= H * .45) {
+      if (r.height >= H * .3) {
         if (r.left + r.width / 2 < W / 2) L = Math.max(L, r.right + 16); else R = Math.max(R, W - r.left + 16);
-      } else if (r.top > H * .55) B = Math.max(B, H - r.top + 12);
+      } else if (r.top > H * .4) B = Math.max(B, H - r.top + 12);
     }
     const aw = Math.max(80, W - L - R), ah = Math.max(80, H - T - B);
     const z = clamp(Math.min(aw * VX / ((x1 - x0 + .04) * W), ah / ((y1 - y0 + .06) * H)), ZMIN, ZMAX);
@@ -1227,12 +1189,13 @@ void main(){
     a.bench = null;
     const name = a.name;
     try {
-      const api = `https://huggingface.co/api/models/${name}?expand[]=cardData&expand[]=safetensors&expand[]=tags&expand[]=gated&expand[]=pipeline_tag&expand[]=downloads&expand[]=likes&expand[]=config`;
+      const api = `https://huggingface.co/api/models/${name}?expand[]=cardData&expand[]=safetensors&expand[]=tags&expand[]=gated&expand[]=pipeline_tag&expand[]=downloads&expand[]=likes&expand[]=config&expand[]=inferenceProviderMapping`;
       const [mr, readme] = await Promise.all([
         fetch(api).then(r => r.ok ? r.json() : null),
         a.gated ? Promise.resolve('') : fetch(`https://huggingface.co/${name}/raw/main/README.md`).then(r => r.ok ? r.text() : '').catch(() => ''),
       ]);
       if (!mr || a.name !== name) return false;
+      a.hfProviders = liveProviders(mr.inferenceProviderMapping);
       const bench = extractBenchmarks(mr);
       a.bench = bench.slice(0, 9);
       const tm = readme.match(TOKENS_RE);
@@ -1244,14 +1207,14 @@ void main(){
       a.steps = rec.steps; a.score = rec.score; a.flops = rec.flops;
       if (moved) {
         a.cls = rec.cls;
-        a.x = bandX(rec.cls, bandFrac(rec)) + (fr(a.i * 7.13 + .13) - .5) * .02;
+        a.frac = bandFrac(rec);
         birthIdx = a.i; birthT = 0;
         const c = census.find(r => r.m.id === name);
         if (c) Object.assign(c, { cls: rec.cls, steps: rec.steps, flops: rec.flops });
         refresh();
       }
       return moved;
-    } catch { return false; }
+    } catch { a.hfProviders = a.hfProviders || []; return false; }
   }
   function openInspector(i) {
     const a = AGENTS[i];
@@ -1260,9 +1223,7 @@ void main(){
     $('in-cls').textContent = `CLASS ${RN[a.cls - 1]} · ${CLS_NAME[a.cls - 1]}`;
     $('in-cls').style.color = CLS_HEX[a.cls - 1];
     $('in-name').textContent = a.api ? a.displayName : a.name;
-    const act = `<div class="in-act"><button type="button" id="in-key">⚿ GET API KEY</button>` +
-      (a.api ? `<a href="https://openrouter.ai/${esc(a.name)}" target="_blank" rel="noopener">OPENROUTER ↗</a>`
-             : `<a href="https://huggingface.co/${esc(a.name)}" target="_blank" rel="noopener">MODEL CARD ↗</a>`) + `</div>`;
+    const act = `<div class="in-act" id="in-act">${actButtons(a)}</div>`;
     if (a.api) {
       const usd = v => v == null || v === '' ? '—' : `$${(+v * 1e6).toFixed(+v * 1e6 < 1 ? 2 : 2)}`;
       $('in-body').innerHTML = act +
@@ -1280,7 +1241,7 @@ void main(){
         `<div class="in-sec">ARENA — THIRD-PARTY (DESIGN ARENA, VIA OPENROUTER)</div>` +
         (a.arena.length ? a.arena.map(b2 => `<div class="in-row"><span>${esc(b2.category)}</span><b>Elo ${b2.elo} · #${b2.rank}</b></div>`).join('') : '<div class="in-note">none listed</div>') +
         `<div class="in-note">Source: openrouter.ai/api/v1/models — the provider publishes capabilities and prices, not parameters or training compute.</div>`;
-      $('in-key').onclick = () => openKeyModal(a);
+      wireAct(a);
       return;
     }
     let body = act +
@@ -1296,10 +1257,11 @@ void main(){
       `<div class="in-sec">BENCHMARKS — SELF-REPORTED</div>` +
       `<div class="in-bench" id="in-bench">${a.bench === null ? '—' : 'loading…'}</div>`;
     $('in-body').innerHTML = body;
-    $('in-key').onclick = () => openKeyModal(a);
+    wireAct(a);
     if (a.bench === undefined) enrichCard(a).then(moved => {
       if (selIdx !== a.i) return;
       if (moved) { openInspector(a.i); return; }
+      $('in-act').innerHTML = actButtons(a); wireAct(a);
       $('in-ev').innerHTML = (a.steps || []).map(esc).join('<br>');
       $('in-bench').innerHTML = a.bench && a.bench.length
         ? a.bench.map(b2 => `<div class="in-row"><span>${b2.ds}</span><b>${b2.value}</b></div>`).join('')
@@ -1417,44 +1379,108 @@ void main(){
     renderFiles(a, el);
   }
 
-  /* ---- GET API KEY — where to get a key for this model, and where to use it ---- */
+  /* ---- where a model can be called with a key, and where it can be downloaded ----
+     Hosted routes, from what each registry publishes:
+       OpenRouter      its model list (API-only models; open models by Hugging Face id)
+       the lab itself  API-only models from labs chat.vims.com calls directly
+       NVIDIA          build.nvidia.com catalog (its API refuses web pages — bundled snapshot)
+       HF providers    Hugging Face's inference-provider mapping for the repo (live ones only)
+     Download = open weights on Hugging Face (not API-only models). */
   const NATIVE_KEYS = {   // providers chat.vims.com and VIMS desktop call directly with your key
-    openai: { label: 'OpenAI', url: 'https://platform.openai.com/api-keys' },
-    anthropic: { label: 'Anthropic', url: 'https://console.anthropic.com/settings/keys' },
-    google: { label: 'Google AI Studio', url: 'https://aistudio.google.com/app/apikey' },
-    'x-ai': { label: 'xAI', url: 'https://console.x.ai/' },
-    mistralai: { label: 'Mistral', url: 'https://console.mistral.ai/api-keys' },
-    deepseek: { label: 'DeepSeek', url: 'https://platform.deepseek.com/api_keys' },
-    moonshotai: { label: 'Moonshot', url: 'https://platform.moonshot.ai/console/api-keys' },
+    openai: { label: 'OpenAI', url: 'https://platform.openai.com/api-keys', chat: 'openai' },
+    anthropic: { label: 'Anthropic', url: 'https://console.anthropic.com/settings/keys', chat: 'anthropic' },
+    google: { label: 'Google AI Studio', url: 'https://aistudio.google.com/app/apikey', chat: 'google' },
+    'x-ai': { label: 'xAI', url: 'https://console.x.ai/', chat: 'xai' },
+    mistralai: { label: 'Mistral', url: 'https://console.mistral.ai/api-keys', chat: 'mistral' },
+    deepseek: { label: 'DeepSeek', url: 'https://platform.deepseek.com/api_keys', chat: 'deepseek' },
+    moonshotai: { label: 'Moonshot', url: 'https://platform.moonshot.ai/console/api-keys', chat: 'moonshot' },
   };
+  const HF_PROVIDERS = {
+    together: { label: 'Together AI', url: 'https://api.together.ai/settings/api-keys' },
+    'fireworks-ai': { label: 'Fireworks', url: 'https://fireworks.ai/account/api-keys' },
+    groq: { label: 'Groq', url: 'https://console.groq.com/keys', chat: 'groq' },
+    cerebras: { label: 'Cerebras', url: 'https://cloud.cerebras.ai/' },
+    sambanova: { label: 'SambaNova', url: 'https://cloud.sambanova.ai/apis' },
+    novita: { label: 'Novita', url: 'https://novita.ai/settings/key-management' },
+    nebius: { label: 'Nebius', url: 'https://studio.nebius.com/' },
+    'featherless-ai': { label: 'Featherless', url: 'https://featherless.ai/account/api-keys' },
+    hyperbolic: { label: 'Hyperbolic', url: 'https://app.hyperbolic.xyz/settings' },
+  };
+  let nvidiaByName = new Map(), nvidiaDate = '';
+  function loadNvidia(ids, date) {
+    const seen = new Map();
+    for (const id of ids) { const n = id.split('/').pop().toLowerCase(); seen.set(n, seen.has(n) ? null : id); }
+    nvidiaByName = new Map([...seen].filter(([, v]) => v));   // ambiguous names don't match
+    nvidiaDate = date || '';
+  }
+  /* live providers from Hugging Face's mapping (object keyed by provider, or array) */
+  function liveProviders(map) {
+    const list = Array.isArray(map) ? map : Object.entries(map || {}).map(([provider, v]) => ({ provider, ...v }));
+    return list.filter(p => p.status === 'live' && p.providerId).map(p => ({ provider: p.provider, id: p.providerId }));
+  }
+  function routes(a) {
+    const out = [];
+    const orId = a.api ? a.name : orByHf.get(a.name.toLowerCase());
+    if (orId) out.push({ label: 'OpenRouter', url: 'https://openrouter.ai/keys', note: `one key for every model it serves — <code>${esc(orId)}</code>`, chat: `openrouter:${orId}` });
+    const native = a.api && NATIVE_KEYS[a.name.split('/')[0]];
+    if (native) out.push({ label: native.label, url: native.url, note: "straight from the lab — pick the model in chat's list for it" });
+    const nv = !a.api && nvidiaByName.get(a.name.split('/').pop().toLowerCase());
+    if (nv) out.push({ label: 'NVIDIA', url: 'https://build.nvidia.com/', note: `NVIDIA's hosted API as <code>${esc(nv)}</code> (catalog snapshot ${esc(nvidiaDate)}) — use it in VIMS desktop; NVIDIA refuses calls from web pages` });
+    const hp = a.hfProviders || [];
+    if (hp.length) {
+      out.push({ label: 'Hugging Face', url: 'https://huggingface.co/settings/tokens', note: `one token routes to ${hp.map(p => HF_PROVIDERS[p.provider]?.label || p.provider).join(', ')}` });
+      for (const p of hp) {
+        const k = HF_PROVIDERS[p.provider];
+        if (k) out.push({ label: k.label, url: k.url, note: `serves it as <code>${esc(p.id)}</code>`, ...(k.chat ? { chat: `${k.chat}:${p.id}` } : {}) });
+      }
+    }
+    return out;
+  }
+  const hasWeights = a => !a.api;
+  function actButtons(a) {
+    const r = routes(a), pending = !a.api && a.hfProviders === undefined;
+    return (r.length || pending ? `<button type="button" id="in-key"${r.length ? '' : ' disabled'}>⚿ ${r.length ? 'API KEY' : 'CHECKING APIs…'}</button>` : '') +
+      (hasWeights(a) ? `<button type="button" id="in-dl" class="dl">⇩ DOWNLOAD</button>` : '') +
+      (a.api ? `<a href="https://openrouter.ai/${esc(a.name)}" target="_blank" rel="noopener">OPENROUTER ↗</a>`
+             : `<a href="https://huggingface.co/${esc(a.name)}" target="_blank" rel="noopener">CARD ↗</a>`);
+  }
+  function wireAct(a) {
+    const k = $('in-key'), d = $('in-dl');
+    if (k) k.onclick = () => openKeyModal(a);
+    if (d) d.onclick = () => openDownloadModal(a);
+  }
+
   const keyModal = $('key-modal');
   let modalReturn = null;
-  function openKeyModal(a) {
-    const orId = a.api ? a.name : orByHf.get(a.name.toLowerCase());
-    const native = a.api ? NATIVE_KEYS[a.name.split('/')[0]] : null;
-    const chatUrl = orId ? `https://chat.vims.com/?use=${encodeURIComponent('openrouter:' + orId)}` : 'https://chat.vims.com/';
+  function showModal(a, sub, html) {
     $('mo-title').textContent = a.api ? a.displayName : a.name;
-    $('mo-sub').textContent = `CLASS ${RN[a.cls - 1]} · ${CLS_NAME[a.cls - 1]}${a.api ? ' · API-ONLY' : ''}`;
+    $('mo-sub').textContent = `CLASS ${RN[a.cls - 1]} · ${CLS_NAME[a.cls - 1]} · ${sub}`;
     $('mo-sub').style.color = CLS_HEX[a.cls - 1];
-    $('mo-body').innerHTML =
-      `<div class="mo-step"><i>1</i>GET AN API KEY</div>` +
-      (orId ? `<a class="mo-opt" href="https://openrouter.ai/keys" target="_blank" rel="noopener"><b>OpenRouter</b><span>one key for every model it serves — including <code>${esc(orId)}</code></span><em>GET KEY ↗</em></a>` : '') +
-      (native ? `<a class="mo-opt" href="${native.url}" target="_blank" rel="noopener"><b>${esc(native.label)}</b><span>straight from the provider — pick the model in chat's ${esc(native.label)} list</span><em>GET KEY ↗</em></a>` : '') +
-      (!orId && !native ? `<div class="in-note">No hosted API lists <code>${esc(a.name)}</code> — run it yourself below: download the weights, or serve it on a GPU node of your own.</div>` : '') +
-      `<div class="mo-step"><i>2</i>USE IT</div>` +
-      (orId ? `<a class="mo-go" href="${chatUrl}" target="_blank" rel="noopener">CHAT WITH IT ON CHAT.VIMS.COM →<span>opens chat with this model selected — paste your key when it asks</span></a>` : '') +
-      `<a class="mo-go alt" href="https://vims.com/download" target="_blank" rel="noopener">USE YOUR KEY IN VIMS DESKTOP ↓<span>download the app, add the key in its Key Manager</span></a>` +
-      `<div class="in-note">Your key lives in your own vault (keys.vims.com) and is sent only to the provider — VIMS servers never see it or your prompts.</div>` +
-      (a.api ? '' : `<details class="mo-run" id="mo-run"${orId || native ? '' : ' open'}><summary>RUN IT YOURSELF — WEIGHTS · GPU NODE</summary><div id="mo-files"></div></details>`);
-    const run = $('mo-run');
-    if (run) {
-      const load = () => { if (!run.dataset.loaded) { run.dataset.loaded = '1'; fillRun(a, $('mo-files')); } };
-      if (run.open) load();
-      run.addEventListener('toggle', () => { if (run.open) load(); });
-    }
+    $('mo-body').innerHTML = html;
     modalReturn = document.activeElement;
     keyModal.hidden = false;
     keyModal.querySelector('.mo-card').focus();
+  }
+  function openKeyModal(a) {
+    const r = routes(a), go = r.find(x => x.chat);
+    showModal(a, a.api ? 'API-ONLY' : 'HOSTED APIs',
+      `<div class="mo-step"><i>1</i>GET AN API KEY</div>` +
+      r.map(x => `<a class="mo-opt" href="${x.url}" target="_blank" rel="noopener"><b>${esc(x.label)}</b><span>${x.note}</span><em>GET KEY ↗</em></a>`).join('') +
+      `<div class="mo-step"><i>2</i>USE IT</div>` +
+      (go ? `<a class="mo-go" href="https://chat.vims.com/?use=${encodeURIComponent(go.chat)}" target="_blank" rel="noopener">CHAT WITH IT ON CHAT.VIMS.COM →<span>opens chat with it selected via ${esc(go.label)} — paste that key when it asks</span></a>` : '') +
+      `<a class="mo-go${go ? ' alt' : ''}" href="https://vims.com/download" target="_blank" rel="noopener">USE YOUR KEY IN VIMS DESKTOP ↓<span>download the app, add the key in its Key Manager</span></a>` +
+      `<div class="in-note">Your key lives in your own vault (keys.vims.com) and is sent only to the provider — VIMS servers never see it or your prompts.</div>` +
+      (hasWeights(a) ? `<button type="button" class="mo-link" id="mo-to-dl">open weights — download or serve it yourself →</button>` : ''));
+    const t = $('mo-to-dl');
+    if (t) t.onclick = () => openDownloadModal(a);
+  }
+  function openDownloadModal(a) {
+    showModal(a, 'OPEN WEIGHTS',
+      `<div class="mo-step"><i>⇩</i>DOWNLOAD — OR SERVE IT ON A GPU NODE</div><div id="mo-files"></div>` +
+      (routes(a).length ? `<button type="button" class="mo-link" id="mo-to-key">or call it through a hosted API →</button>` : ''));
+    fillRun(a, $('mo-files'));
+    const t = $('mo-to-key');
+    if (t) t.onclick = () => openKeyModal(a);
   }
   function closeKeyModal() {
     if (keyModal.hidden) return false;
@@ -1484,50 +1510,40 @@ void main(){
   /* legend class filter */
   let filterCls = 0;
   $('lg-rows').innerHTML = CLASSES.map((k, i) =>
-    `<div class="lg-row${k.reserved ? ' rsv' : ''}" data-c="${i + 1}"><i style="--c:${k.hex}"></i>${k.rn} · ${k.name}<span class="n"></span></div>`).join('');
+    `<button type="button" class="lg-row${k.reserved ? ' rsv' : ''}" data-c="${i + 1}" aria-pressed="false"><i style="--c:${k.hex}"></i>${k.rn} · ${k.name}<span class="n"></span></button>`).join('');
   $('legend').addEventListener('click', e => {
     const row = e.target.closest('.lg-row');
     if (!row) return;
     const c = +row.dataset.c;
     if (CLASSES[c - 1].reserved) { openClassInfo(c); return; }
     filterCls = filterCls === c ? 0 : c;
-    [...$('legend').querySelectorAll('.lg-row')].forEach(r =>
-      r.classList.toggle('off', filterCls && +r.dataset.c !== filterCls));
+    [...$('legend').querySelectorAll('.lg-row')].forEach(r => {
+      r.classList.toggle('off', !!filterCls && +r.dataset.c !== filterCls);
+      r.setAttribute('aria-pressed', String(+r.dataset.c === filterCls));
+    });
     applyRosterFilter();
     if (filterCls && selIdx >= 0 && AGENTS[selIdx].cls !== filterCls) select(-1);
   });
 
   /* registry texture — the sky renders actual node data, not uniform
      arrays. Uniform-vector ceilings can't cap the node count. */
-  const nodeData = new Uint8Array(1024 * 4);
+  const nodeData = new Uint8Array(512 * 4);
   function uploadNodes() {
     if (!glOK) return;
     gl.bindTexture(gl.TEXTURE_2D, nodeTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1024, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
   }
   function syncStars() {
     AGENTS.forEach((a, i) => {
       const o = i * 8;
       const x16 = Math.min(65535, Math.max(0, Math.round(a.x / 1.2 * 65535)));
-      const y16 = Math.min(65535, Math.max(0, Math.round(a.y / .8 * 65535)));
+      const y16 = Math.min(65535, Math.max(0, Math.round(a.y / 1.2 * 65535)));
       nodeData[o] = x16 >> 8; nodeData[o + 1] = x16 & 255;
       nodeData[o + 2] = y16 >> 8; nodeData[o + 3] = y16 & 255;
       nodeData[o + 4] = Math.round((a.cls || 1) * 25);
       nodeData[o + 5] = a.used && a.revoked ? 255 : 0;
       nodeData[o + 6] = a.used ? 0 : 255;
       nodeData[o + 7] = 0;
-    });
-    nodeData.fill(255, 512 * 4);
-    const live = AGENTS.filter(a => a.used).map(a => a.i);
-    const pairs = [];
-    for (let k = 0; k + 2 < live.length && pairs.length < 44; k++) pairs.push([live[k], live[k + 2]]);
-    for (let e = 0; e < 4 && live.length > 8; e++) {
-      const ai = live[Math.floor(fr(Math.sin(e * 127.1 + 3.7 * 311.7) * 43758.5453) * live.length)];
-      const bi = live[Math.floor(fr(Math.sin(e * 127.1 + 7.3 * 311.7) * 43758.5453) * live.length)];
-      if (ai !== bi) pairs.push([ai, bi]);
-    }
-    pairs.slice(0, 48).forEach(([a, b], e) => {
-      nodeData[(512 + e) * 4] = a; nodeData[(512 + e) * 4 + 1] = b;
     });
     uploadNodes();
   }
@@ -1550,8 +1566,29 @@ void main(){
     }
   }
   let registryTotal = 0;
+  function layoutBands() {
+    const counts = CLASSES.map((_, i) => AGENTS.filter(a => a.used && a.cls === i + 1).length);
+    const wts = CLASSES.map((k, i) => k.reserved ? 0 : Math.max(2.4, Math.sqrt(counts[i])));
+    const span = SPAN1 - SPAN0 - (NCLS - ACTIVE) * RSV_W, tot = wts.reduce((p, q) => p + q, 0);
+    let x = SPAN0;
+    CLASSES.forEach((k, i) => { BAND[i].x0 = x; BAND[i].w = k.reserved ? RSV_W : span * wts[i] / tot; x += BAND[i].w; });
+    labels.forEach((m, i) => { m.dataset.x = BAND[i].x0 + BAND[i].w / 2; });
+    bandEdges.forEach(d => { const k = +d.dataset.k; d.dataset.x = k < NCLS ? BAND[k].x0 : SPAN1; });
+  }
+  /* inside a band: half the model's own position (score / evidence), half its rank —
+     so models with the same score spread out instead of stacking */
+  const nameHash = n => { let h = 2166136261; for (let i = 0; i < n.length; i++) h = Math.imul(h ^ n.charCodeAt(i), 16777619); return (h >>> 0) / 4294967296; };
+  function layoutX() {
+    for (let c = 1; c <= NCLS; c++) {
+      const set = AGENTS.filter(a => a.used && a.cls === c).sort((p, q) => (p.frac ?? .5) - (q.frac ?? .5) || nameHash(p.name) - nameHash(q.name));
+      set.forEach((a, r) => {
+        const f = .5 * clamp(a.frac ?? .5, 0, 1) + .5 * (set.length > 1 ? r / (set.length - 1) : .5);
+        a.x = bandX(c, f) + (fr(a.i * 7.13 + .13) - .5) * .004;
+      });
+    }
+  }
   function refresh() {
-    layoutAdoption(); syncStars(); rebuildRoster();
+    layoutBands(); layoutX(); layoutAdoption(); syncStars(); rebuildRoster();
     $('st-reg').textContent = registryTotal || AGENTS.filter(a => a.used).length;
     $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
@@ -1563,7 +1600,7 @@ void main(){
   }
   syncStars();
   refresh();
-  cxIn.placeholder = mobile ? 'search or owner/model' : 'search models · owner/model · hub URL';
+  cxIn.placeholder = mobile ? 'Search models…' : 'Search models, owner/name or a hub URL…';
   initGL();
   if (!glOK) document.body.classList.add('nogl');
   loadRegistry();
@@ -1584,10 +1621,10 @@ void main(){
 
     /* periodic re-certification sweep — the registry re-classifies itself */
     const cyc = t % 34;
-    const rc = cyc > 29 ? Math.sin((cyc - 29) / 5 * Math.PI) : 0;
+    const rc = !reducedMotion && cyc > 29 ? Math.sin((cyc - 29) / 5 * Math.PI) : 0;
     const ignite = 1 - rc * .8;
     const net = 1 - rc * .75;
-    const glitch = .08 + rc * .35;
+    const glitch = reducedMotion ? 0 : .03 + rc * .3;
     const boot = 1 - Math.pow(1 - Math.min(1, t / 1.4), 3);
     const collapse = 1 - boot;
 
@@ -1604,32 +1641,18 @@ void main(){
     const u = progScene.u;
     gl.uniform2f(u.R, cols, rows);
     gl.uniform1f(u.T, t);
-    gl.uniform1f(u.P, .8);
-    gl.uniform1f(u.Spike, .4);
-    gl.uniform1f(u.Spin, 1.1);
     gl.uniform1f(u.Glitch, glitch);
-    gl.uniform1f(u.Threat, .14);
-    gl.uniform1f(u.Gate, .22);
-    gl.uniform1f(u.Press, .3);
-    gl.uniform1f(u.Ekg, .18);
     gl.uniform1f(u.Lum, 1.05);
-    gl.uniform1f(u.Ex, 0);
     gl.uniform1f(u.Ey, EY);
-    gl.uniform1f(u.Face, 0);
-    gl.uniform1f(u.Steps, 32);
     gl.uniform1f(u.Net, net);
     gl.uniform1f(u.Ignite, ignite);
-    gl.uniform1f(u.Fall, 1);
     gl.uniform1f(u.Zoom, zoom);
     gl.uniform2f(u.PAN, pan.x, pan.y);
     gl.uniform1f(u.VX, VX);
     gl.uniform1f(u.NS, mobile ? .6 : .82);
-    gl.uniform1f(u.Sel, selIdx);
     gl.uniform1f(u.Cls, filterCls);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, nodeTex);
     gl.uniform1i(u.Nodes, 3);
-    gl.uniform1f(u.Birth, birthIdx);
-    gl.uniform1f(u.BirthT, birthT);
     gl.uniform2f(u.PTR, px, py);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -1661,15 +1684,54 @@ void main(){
     gl.uniform1f(progDisp.u.T, t);
     gl.uniform1f(progDisp.u.Glitch, glitch);
     gl.uniform1f(progDisp.u.Collapse, collapse);
-    gl.uniform1f(progDisp.u.Roll, W < 700 ? 0 : 1);
+    gl.uniform1f(progDisp.u.Roll, W < 700 || reducedMotion ? 0 : 1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
+    drawPoints(t);
     const tmp = fbA; fbA = fbB; fbB = tmp;
+  }
+
+  /* pass 4 — the stars: one point per plotted model, rebuilt each frame (192 × 6 floats) */
+  const PAL = new Float32Array(CLASSES.flatMap(k => [1, 3, 5].map(o => parseInt(k.hex.slice(o, o + 2), 16) / 255)));
+  const ptsData = new Float32Array(NODES * 6);
+  function drawPoints(t) {
+    let n = 0;
+    for (const a of AGENTS) {
+      if (!a.used) continue;
+      const o = n++ * 6;
+      ptsData[o] = a.x; ptsData[o + 1] = a.y; ptsData[o + 2] = a.cls;
+      ptsData[o + 3] = a.api ? 1 : a.revoked ? 2 : 0;
+      ptsData[o + 4] = a.i === selIdx ? 2 : a.i === hoverIdx ? 1 : 0;
+      ptsData[o + 5] = a.i === birthIdx && birthT < 2.5 && !reducedMotion ? 1 - birthT / 2.5 : 0;
+    }
+    if (!n) return;
+    const p = progPts, u = p.u;
+    gl.useProgram(p.p);
+    gl.bindBuffer(gl.ARRAY_BUFFER, ptsBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, ptsData.subarray(0, n * 6), gl.DYNAMIC_DRAW);
+    const aPos = gl.getAttribLocation(p.p, 'aPos'), aDat = gl.getAttribLocation(p.p, 'aDat');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 24, 0);
+    gl.enableVertexAttribArray(aDat);
+    gl.vertexAttribPointer(aDat, 4, gl.FLOAT, false, 24, 8);
+    gl.uniform1f(u.Zoom, zoom); gl.uniform1f(u.VX, VX); gl.uniform1f(u.Dpr, dpr); gl.uniform1f(u.MaxPt, maxPt);
+    gl.uniform1f(u.Cls, filterCls); gl.uniform1f(u.T, reducedMotion ? 0 : t);
+    gl.uniform2f(u.PAN, pan.x, pan.y); gl.uniform2f(u.PTR, px, py);
+    gl.uniform3fv(u.Pal, PAL);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.POINTS, 0, n);
+    gl.disable(gl.BLEND);
+    gl.disableVertexAttribArray(aDat);
   }
 
   /* labels — screen-space, greedy collision culling in priority order:
      selected, hovered, then registry rank. Dense regions show only what fits. */
   const LB_H = 13, rects = [];
+  let headerBottom = 0;   // labels never draw under the header bar
+  const measureHeader = () => { headerBottom = document.querySelector('.top').getBoundingClientRect().bottom; };
+  measureHeader();
+  addEventListener('resize', () => requestAnimationFrame(measureHeader));
   const order = [];
   function placeLabels() {
     for (const s of labels) {
@@ -1678,9 +1740,23 @@ void main(){
       s.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
       s.style.opacity = !glOK ? 0 : filterCls && c !== filterCls ? .12 : 1;
     }
-    for (const d of bandEdges) d.style.transform = `translateX(${toScreen(+d.dataset.x, 0)[0]}px)`;
     {
-      const [bx, by] = toScreen(BX0 + NCLS * BW + .006, EY + .3);
+      const [rx] = toScreen(BAND[ACTIVE].x0 + (NCLS - ACTIVE) * RSV_W / 2, 0), [, ry] = toScreen(0, EY + .76);
+      rsvCap.style.transform = `translate(${rx}px,${ry}px) translate(-50%,-260%)`;
+      rsvCap.style.opacity = glOK ? .6 : 0;
+      const [lx0, ly] = toScreen(SPAN0, EY), [lx1] = toScreen(SPAN1, EY);
+      planeLine.style.transform = `translate(${lx0}px,${ly}px)`;
+      planeLine.style.width = Math.max(0, lx1 - lx0) + 'px';
+      planeLine.style.opacity = glOK ? 1 : 0;
+    }
+    /* band edges span the plot only, not the header or the panels' margins */
+    const yTop = toScreen(0, EY + .84)[1], yBot = toScreen(0, EY - .32)[1];
+    for (const d of bandEdges) {
+      d.style.transform = `translate(${toScreen(+d.dataset.x, 0)[0]}px,${yTop}px)`;
+      d.style.height = Math.max(0, yBot - yTop) + 'px';
+    }
+    {
+      const [bx, by] = toScreen(SPAN1 + .008, EY + .2);
       beyond.style.transform = `translate(${bx}px,${by}px) rotate(-90deg)`;
       beyond.style.opacity = glOK ? .55 : 0;
     }
@@ -1704,7 +1780,7 @@ void main(){
       if (a.used && glOK && !(filterCls && a.cls !== filterCls) && (hot || shown < budget)) {
         const [x, y] = toScreen(a.x, a.y);
         const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;
-        const onScreen = x > 4 && x < W - 4 && y > 0 && y < H - 20;
+        const onScreen = x > 4 && x < W - 4 && y > headerBottom && y < H - 20;
         if (onScreen && (hot || !rects.some(r => l < r[2] && l + w > r[0] && tp < r[3] && tp + LB_H > r[1]))) {
           const cx = clamp(x, w / 2 + 2, W - w / 2 - 2);
           rects.push([cx - w / 2, tp, cx + w / 2, tp + LB_H]);

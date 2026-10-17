@@ -157,7 +157,7 @@ Portrait screens show a slice of the capability axis at zoom 1 — pan for the
 rest. Labels are collision-culled in priority order (selected → hovered →
 download rank), so dense regions only label what fits.
 
-**Get API key.** `⚿ GET API KEY` on every model opens a modal: where to get a
+**API key / Download.** Each model gets the buttons it actually has: `⚿ API KEY` when a hosted API serves it — OpenRouter, the lab itself, NVIDIA (build.nvidia.com catalog, bundled snapshot — its API refuses web pages), or a live Hugging Face inference provider (Together, Fireworks, Groq, Novita, Featherless…, read from the repo's provider mapping; one Hugging Face token routes to all of them) — and `⇩ DOWNLOAD` when it has open weights; both when both. The key modal lists where to get a
 key for it — OpenRouter (one key for every model it serves; open models are
 matched to OpenRouter by their Hugging Face id) and, for the frontier labs,
 the provider's own key page — then where to use it: **chat.vims.com** opens
@@ -197,15 +197,27 @@ vacant slots draw nothing.
 
 Vanilla JS + WebGL. No build step, no dependencies, no backend.
 
-Three passes per frame:
+Four passes per frame:
 
-1. **`FS_SCENE`** — the sky at terminal-cell resolution: `r` luminance,
-   `g` threat, `b` class hue. The registry is uploaded as a 512×1 RGBA8
-   texture (16-bit position + class/restricted/vacant flags per node, edge
-   index pairs) — no uniform-vector ceiling, works on every WebGL1 driver.
+1. **`FS_SCENE`** — the ambient sky at terminal-cell resolution: sparse dust,
+   the plane's soft glow, a faint aura where each star sits (summed and
+   capped, so clusters warm the field without filling it), the sweep. The
+   registry is a 512×1 RGBA8 texture (16-bit position + class / restricted /
+   vacant flags per node).
 2. **`FS_STAMP`** — one glyph per cell from a density-ramp atlas,
    max-blended into a phosphor persistence buffer.
 3. **`FS_DISPLAY`** — CRT post: chroma split, scanlines, band tearing.
+4. **`VS_PTS` / `FS_PTS`** — the stars themselves, one `gl.POINTS` sprite per
+   plotted model at full resolution: class colour and size; **filled** = open
+   weights, **hollow ring** = API-only, **red rim** = restricted; hover and
+   selection rings; the classify flare.
+
+Bands share the width by membership (`√n`, floored so empty bands stay
+visible; reserved VIII–X are narrow), and inside a band a model sits half by
+its own score/evidence, half by rank — so equal scores spread instead of
+stacking. The certification plane is a 1px DOM line over the canvas; band
+edges span the plot only. `prefers-reduced-motion` stops the sweep, glitch,
+roll, twinkle and flare.
 
 GL resources are rebuilt on `webglcontextrestored`, render targets are freed
 and reallocated only when the backing size changes, and if WebGL is

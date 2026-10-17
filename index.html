@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" style="color-scheme:dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="console.css?v=6">
+  <link rel="stylesheet" href="console.css?v=7">
 </head>
 <body>
 
@@ -21,12 +21,12 @@
   <div class="hud">
     <div class="top">
       <button type="button" class="brand" id="brand-switch" aria-haspopup="dialog" aria-label="safety.vims — open the VIMS app selector" title="VIMS apps">
-        <img class="mark" src="/vims.png" alt=""><span class="bt">safety<span class="dim">.vims</span></span><span class="caret" aria-hidden="true">▾</span>
+        <img class="mark" src="/vims.png" alt="" width="22" height="22"><span class="bt">safety<span class="dim">.vims</span></span><span class="caret" aria-hidden="true">▾</span>
       </button>
       <div class="cx">
         <span class="cx-p">CLASSIFY&nbsp;▸</span>
         <input id="cx-in" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cx-drop"
-          placeholder="search models" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+          placeholder="Search models…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
         <span class="cx-stat" id="cx-stat" aria-live="polite"></span>
         <kbd class="cx-k">/</kbd>
         <div class="cx-drop" id="cx-drop" role="listbox" hidden></div>
@@ -43,11 +43,12 @@
     <div class="legend" id="legend">
       <div class="lg-h card-h"><span>RISK CLASS — SPECTRAL TYPE</span><button class="card-min" aria-label="collapse">–</button></div>
       <div id="lg-rows"></div>
+      <div class="lg-shapes" aria-label="Shape key"><span><i class="sh open"></i>open weights</span><span><i class="sh api"></i>API-only</span><span><i class="sh rsv"></i>restricted</span></div>
       <div class="lg-note">I–V FROM METADATA · VI–VII FROM CARD EVIDENCE<br>VIII–X RESERVED — EMPTY UNTIL EVIDENCE EXISTS<br>SELECT A CLASS TO ISOLATE · MARKERS SHOW CRITERIA</div>
     </div>
 
     <div class="roster" data-resize>
-      <div class="ro-h card-h"><span id="ro-title">REGISTRY · ON MAP</span><button class="card-min" aria-label="collapse">–</button></div>
+      <div class="ro-h card-h"><span id="ro-title">ON MAP</span><button class="card-min" aria-label="collapse">–</button></div>
       <div class="ro-list" id="roster"></div>
     </div>
 
@@ -72,7 +73,7 @@
     </nav>
   </div>
 
-  <script src="map.js?v=6"></script>
+  <script src="map.js?v=7"></script>
   <script>
     // The VIMS app selector — the same one every VIMS app opens (web-nav
     // ServiceSwitcher, bundled by vims.com), loaded on first use.
