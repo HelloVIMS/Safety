@@ -83,6 +83,7 @@
     a.hfProviders = mo.m.inferenceProviderMapping !== undefined ? liveProviders(mo.m.inferenceProviderMapping) : undefined;
     a.name = mo.m.id; a.downloads = mo.downloads || 0; a.likes = mo.m.likes || 0;
     a.api = !!mo.api;
+    a.date = recDate(mo); a.future = false; a.bornT = null;
     if (a.api) {
       a.provider = CLOSED_PROVIDER[mo.m.id.split('/')[0]] || mo.m.id.split('/')[0];
       a.created = mo.m.created || 0; a.context = mo.m.context_length || 0;
@@ -250,6 +251,8 @@
     if (mo.cls === 7 && mo.flops) return Math.log10(mo.flops) - 25;
     return .5;
   }
+  /* when a model was published: Hub createdAt, or OpenRouter's created (seconds) */
+  const recDate = r => r.api ? (r.m.created || 0) * 1000 : (Date.parse(r.m.createdAt || '') || 0);
   function classifyAll(models) {
     const exact = new Map(models.filter(m => m.safetensors?.total).map(m => [m.id.toLowerCase(), m.safetensors.total / 1e9]));
     for (const r of census) if (r.paramsB && r.basis === 'safetensors') exact.set(r.m.id.toLowerCase(), r.paramsB);
@@ -283,6 +286,7 @@
     for (const mo of bad.slice(0, 4)) { if (i >= NODES - API_SLOTS) break; placeModel(mo, i++); }
     refresh();
     fitView();
+    syncTimeline(); syncYAxis();
     if (!cxStat.classList.contains('ok')) idleStatus();
   }
 
@@ -806,12 +810,15 @@ void main(){
 
   /* viewport — W/H in css px; VX = visible world width at zoom 1.
      Portrait screens show a slice of the spectrum and pan for the rest. */
-  let W = innerWidth, H = innerHeight, VX = 1, mobile = false;
+  /* VX = visible world width at zoom 1: the screen's own (VX0) times a stretch the
+     fit chooses, so x (categorical bands) and y fill the plot independently */
+  let W = innerWidth, H = innerHeight, VX = 1, VX0 = 1, xStretch = 1, mobile = false;
   let CELL_W = 10, CELL_H = 15, cols = 0, rows = 0, dpr = 1;
   function measure() {
     W = innerWidth; H = innerHeight;
     mobile = W < 900 || matchMedia('(pointer: coarse)').matches;
-    VX = clamp((W / H) * 1.5, .62, 1);
+    VX0 = clamp((W / H) * 1.5, .62, 1);
+    VX = VX0 * xStretch;
     const small = W < 700;
     CELL_W = small ? 8 : 10; CELL_H = small ? 12 : 15;
     dpr = Math.min(devicePixelRatio || 1, small ? 1.25 : 1.5);
@@ -989,7 +996,7 @@ void main(){
   function applyRosterFilter() {
     let shown = 0;
     AGENTS.forEach((a, i) => {
-      const on = a.used && (!filterCls || a.cls === filterCls);
+      const on = a.used && !a.future && (!filterCls || a.cls === filterCls);
       rosterRows[i].hidden = !(on || (!filterCls && !a.used));
       if (on) shown++;
     });
@@ -1052,7 +1059,7 @@ void main(){
     let L = 24, R = 24, B = mobile ? 70 : 40;
     const T = topH + 24;
     /* tall cards reserve a side; short cards docked low reserve the bottom */
-    if (!mobile && !document.body.classList.contains('bare')) for (const el of [$('legend'), document.querySelector('.roster')]) {
+    if (!mobile && !document.body.classList.contains('bare')) for (const el of [$('legend'), document.querySelector('.roster'), $('viewbar')]) {
       const r = el.getBoundingClientRect();
       if (!r.width) continue;
       if (r.height >= H * .3) {
@@ -1060,17 +1067,21 @@ void main(){
       } else if (r.top > H * .4) B = Math.max(B, H - r.top + 12);
     }
     const aw = Math.max(80, W - L - R), ah = Math.max(80, H - T - B);
-    const z = clamp(Math.min(aw * VX / ((x1 - x0 + .04) * W), ah / ((y1 - y0 + .06) * H)), ZMIN, ZMAX);
+    /* height decides the zoom; the x stretch makes the bands fill the width */
+    const z = clamp(ah / ((y1 - y0 + .06) * H), ZMIN, ZMAX);
+    xStretch = clamp((x1 - x0 + .04) * z * W / aw / VX0, .45, 3);
+    VX = VX0 * xStretch;
     const ax = (L + aw / 2) / W, ay = (T + ah / 2) / H;
-    zoomT = z;
+    zoom = zoomT = z;
     panT.x = (x0 + x1) / 2 - .5 - (ax - .5) * VX / z;
     panT.y = (y0 + y1) / 2 - .5 - (.5 - ay) / z;
     clampPan();
+    pan.x = panT.x; pan.y = panT.y;   // a re-fit changes the stretch too: jump, don't glide
   }
   function pick(sx, sy, radius) {
     let best = radius * radius, hit = -1;
     for (const a of AGENTS) {
-      if (!a.used || a.hidden || (filterCls && a.cls !== filterCls)) continue;
+      if (!a.used || a.hidden || a.future || (filterCls && a.cls !== filterCls)) continue;
       const [x, y] = toScreen(a.x, a.y);
       const d = (x - sx) ** 2 + (y - sy) ** 2;
       if (d < best) { best = d; hit = a.i; }
@@ -1618,6 +1629,88 @@ void main(){
     if (filterCls && selIdx >= 0 && AGENTS[selIdx].cls !== filterCls) select(-1);
   });
 
+  /* ============ THE Z AXIS — time ============
+     Every model has a publication date. "As of" a month, models published after
+     it don't exist yet; playing the timeline fills the sky in release order. */
+  const MONTH = 30.44 * 864e5;
+  let asOf = 0, clock = 0, playing = false;
+  const fmtMonth = ms => new Date(ms).toISOString().slice(0, 7);
+  const tlRange = () => {
+    const ds = census.map(recDate).filter(d => d > Date.UTC(2017, 0));
+    return ds.length ? [Math.min(...ds), Date.now()] : [Date.UTC(2018, 0), Date.now()];
+  };
+  {
+    const q = new URLSearchParams(location.search).get('asof');
+    if (q && /^\d{4}-\d{2}$/.test(q)) asOf = Date.UTC(+q.slice(0, 4), +q.slice(5) - 1, 28);
+  }
+  function applyAsOf() {
+    let changed = false;
+    for (const a of AGENTS) {
+      const was = !!a.future;
+      a.future = !!(a.used && asOf && a.date > asOf);
+      if (was !== a.future) changed = true;
+      if (was && !a.future && playing) a.bornT = clock;
+    }
+    if (changed && glOK) syncStars();
+  }
+  const tl = $('tl'), tlLabel = $('tl-label'), tlPlay = $('tl-play');
+  function syncTimeline() {
+    const [t0, t1] = tlRange();
+    tl.min = 0; tl.max = Math.max(1, Math.round((t1 - t0) / MONTH));
+    tl.value = asOf ? Math.round((asOf - t0) / MONTH) : tl.max;
+    tlLabel.textContent = asOf ? `AS OF ${fmtMonth(asOf)}` : 'NOW';
+    tl.setAttribute('aria-valuetext', asOf ? fmtMonth(asOf) : 'now');
+  }
+  function setAsOf(ms, push = true) {
+    const [, t1] = tlRange();
+    asOf = ms && ms < t1 - MONTH / 2 ? ms : 0;
+    syncTimeline();
+    applyAsOf(); applyRosterFilter();
+    if (push) syncUrl();
+  }
+  tl.addEventListener('input', () => {
+    const [t0] = tlRange();
+    playing = false; tlPlay.textContent = '▶';
+    setAsOf(t0 + +tl.value * MONTH);
+  });
+  let playT = 0;
+  tlPlay.addEventListener('click', () => {
+    if (playing) { playing = false; tlPlay.textContent = '▶'; tlPlay.setAttribute('aria-label', 'Play the release timeline'); return; }
+    const [t0] = tlRange();
+    if (!asOf) setAsOf(t0, false);
+    playing = true; playT = performance.now();
+    tlPlay.textContent = '❚❚'; tlPlay.setAttribute('aria-label', 'Pause the release timeline');
+  });
+  /* advanced from the frame loop: the whole history in ~24 s */
+  function stepTimeline(now) {
+    if (!playing) return;
+    const [t0, t1] = tlRange(), rate = (t1 - t0) / 24000;
+    const next = (asOf || t0) + (now - playT) * rate;
+    playT = now;
+    if (next >= t1) { playing = false; tlPlay.textContent = '▶'; setAsOf(0); return; }
+    setAsOf(next, false);
+  }
+
+  /* y-axis picker */
+  const yBtns = [...document.querySelectorAll('#y-axis [data-y]')];
+  function syncYAxis() {
+    yBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.y === yAxis)));
+    axes[1].textContent = Y_AXES[yAxis];
+    axes[3].style.display = apiStrip() ? '' : 'none';
+    axes[3].textContent = yAxis === 'size' ? 'API · SIZE UNPUBLISHED' : 'API · NEWEST ↑';
+  }
+  yBtns.forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.y === yAxis) return;
+    yAxis = b.dataset.y;
+    syncYAxis(); refresh(); syncUrl();
+  }));
+  function syncUrl() {
+    const u = new URL(location.href);
+    if (yAxis !== 'adoption') u.searchParams.set('y', yAxis); else u.searchParams.delete('y');
+    if (asOf) u.searchParams.set('asof', fmtMonth(asOf)); else u.searchParams.delete('asof');
+    history.replaceState(null, '', u);
+  }
+
   /* registry texture — the sky renders actual node data, not uniform
      arrays. Uniform-vector ceilings can't cap the node count. */
   const nodeData = new Uint8Array(512 * 4);
@@ -1635,28 +1728,45 @@ void main(){
       nodeData[o + 2] = y16 >> 8; nodeData[o + 3] = y16 & 255;
       nodeData[o + 4] = Math.round((a.cls || 1) * 25);
       nodeData[o + 5] = a.used && a.revoked ? 255 : 0;
-      nodeData[o + 6] = a.used ? 0 : 255;
+      nodeData[o + 6] = a.used && !a.future ? 0 : 255;   // not yet published = absent
       nodeData[o + 7] = 0;
     });
     uploadNodes();
   }
   /* H–R y-axis: adoption = download rank among plotted models.
      Attested rise above the plane, restricted mirror below it. */
-  function layoutAdoption() {
-    /* API-only models have no download counts: their own strip, ordered by release date */
-    const apis = AGENTS.filter(a => a.used && a.api).sort((p, q) => p.created - q.created);
-    apis.forEach((a, k) => {
-      a.y = EY + .6 + .1 * (apis.length > 1 ? k / (apis.length - 1) : .5) + (fr(a.i * 3.77 + .41) - .5) * .015;
+  /* ============ THE Y AXIS — what height means (?y=) ============
+       adoption  open weights by download rank; API-only (no download counts) in a strip by release date
+       released  every model by publication date — open and API-only on one axis
+       size      open weights by parameter count (log); API-only (sizes unpublished) in a strip
+     Restricted models mirror below the plane on the same measure. */
+  const Y_AXES = { adoption: 'DOWNLOADS ↑', released: 'RELEASED ↑', size: 'PARAMETERS · LOG ↑' };
+  let yAxis = Y_AXES[new URLSearchParams(location.search).get('y')] ? new URLSearchParams(location.search).get('y') : 'adoption';
+  const apiStrip = () => yAxis !== 'released';
+  const ranker = vals => { const s = vals.filter(v => v > 0).sort((p, q) => p - q); return v => !v || s.length < 2 ? .5 : s.findIndex(x => x >= v) / (s.length - 1); };
+  const logSize = b => b > 0 ? clamp((Math.log10(b) + 2) / 5, 0, 1) : -1;   // 10M → 0 … 1T → 1
+  /* items: { api, bad, dl, date, size, seed }; returns y for each */
+  function yLayout(items) {
+    const top = items.filter(o => !o.bad), bad = items.filter(o => o.bad);
+    const api = top.filter(o => o.api), open = top.filter(o => !o.api);
+    const j = o => (fr(o.seed * 3.77 + .41) - .5) * .02;
+    const rDl = ranker(open.map(o => o.dl)), rBadDl = ranker(bad.map(o => o.dl));
+    const rApiDate = ranker(api.map(o => o.date)), rDate = ranker(top.map(o => o.date)), rBadDate = ranker(bad.map(o => o.date));
+    return items.map(o => {
+      if (o.bad) {
+        const v = yAxis === 'released' ? rBadDate(o.date) : yAxis === 'size' ? Math.max(0, logSize(o.size)) : rBadDl(o.dl);
+        return EY - .05 - .2 * v + j(o);
+      }
+      if (yAxis === 'released') return o.date ? EY + .05 + .66 * rDate(o.date) + j(o) : EY + .035;
+      if (o.api) return EY + .6 + .1 * rApiDate(o.date) + j(o) * .7;
+      if (yAxis === 'size') { const v = logSize(o.size); return v < 0 ? EY + .035 : EY + .05 + .5 * v + j(o); }
+      return EY + .05 + .5 * rDl(o.dl) + j(o);
     });
-    for (const bad of [false, true]) {
-      const set = AGENTS.filter(a => a.used && !a.api && a.revoked === bad).sort((p, q) => p.downloads - q.downloads);
-      set.forEach((a, k) => {
-        const ad = set.length > 1 ? k / (set.length - 1) : .5;
-        a.y = bad
-          ? EY - .05 - .2 * ad + (fr(a.i * 5.71 + .31) - .5) * .02
-          : EY + .05 + .5 * ad + (fr(a.i * 3.77 + .41) - .5) * .02;
-      });
-    }
+  }
+  function layoutAdoption() {
+    const live = AGENTS.filter(a => a.used);
+    const ys = yLayout(live.map(a => ({ api: a.api, bad: a.revoked, dl: a.downloads, date: a.date, size: a.paramsB, seed: a.i })));
+    live.forEach((a, k) => { a.y = ys[k]; });
   }
   let registryTotal = 0;
   function layoutBands() {
@@ -1685,19 +1795,14 @@ void main(){
   function layoutDust() {
     const plotted = new Set(AGENTS.filter(a => a.used).map(a => a.name));
     const rest = census.filter(r => !plotted.has(r.m.id));
-    const pct = (arr, key) => { const s = arr.map(key).sort((p, q) => p - q); return v => s.length > 1 ? s.findIndex(x => x >= v) / (s.length - 1) : .5; };
-    const open = rest.filter(r => !r.api && !r.unsafe), bad = rest.filter(r => !r.api && r.unsafe), api = rest.filter(r => r.api);
-    const pO = pct(open, r => r.downloads), pB = pct(bad, r => r.downloads), pA = pct(api, r => r.m.created || 0);
-    dust = rest.map(r => {
+    const ys = yLayout(rest.map(r => ({ api: !!r.api, bad: !!r.unsafe, dl: r.downloads, date: recDate(r), size: r.paramsB || 0, seed: nameHash(r.m.id) * 997 })));
+    dust = rest.map((r, k) => {
       const h = nameHash(r.m.id), f = .5 * clamp(bandFrac(r), 0, 1) + .5 * h;
-      const y = r.api ? EY + .6 + .1 * pA(r.m.created || 0)
-        : r.unsafe ? EY - .05 - .2 * pB(r.downloads)
-        : EY + .05 + .5 * pO(r.downloads);
-      return { x: bandX(r.cls, f), y: y + (fr(h * 97.3) - .5) * .01, cls: r.cls };
+      return { x: bandX(r.cls, f), y: ys[k], cls: r.cls, date: recDate(r) };
     });
   }
   function refresh() {
-    layoutBands(); layoutX(); layoutAdoption(); layoutDust(); syncStars(); rebuildRoster();
+    layoutBands(); layoutX(); layoutAdoption(); layoutDust(); applyAsOf(); syncStars(); rebuildRoster();
     $('st-reg').textContent = registryTotal || AGENTS.filter(a => a.used).length;
     $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
@@ -1727,6 +1832,8 @@ void main(){
     zoom = lerp(zoom, zoomT, .09 * df);
     pan.x = lerp(pan.x, panT.x, .12 * df); pan.y = lerp(pan.y, panT.y, .12 * df);
     if (birthT < 5) birthT += dt; else if (birthIdx >= 0) birthIdx = -1;
+    clock = t;
+    stepTimeline(now || performance.now());
 
     /* periodic re-certification sweep — the registry re-classifies itself */
     const cyc = t % 34;
@@ -1808,9 +1915,10 @@ void main(){
   let bubbles = [];
   function clusterStars() {
     for (const a of AGENTS) a.hidden = false;
+    applyAsOf();
     const cells = new Map();
     for (const a of AGENTS) {
-      if (!a.used || a.i === selIdx || a.i === hoverIdx || (filterCls && a.cls !== filterCls)) continue;
+      if (!a.used || a.future || a.i === selIdx || a.i === hoverIdx || (filterCls && a.cls !== filterCls)) continue;
       const [x, y] = toScreen(a.x, a.y);
       const k = `${Math.floor(x / CLUSTER_PX)},${Math.floor(y / CLUSTER_PX)}`;
       (cells.get(k) || cells.set(k, []).get(k)).push(a);
@@ -1838,6 +1946,7 @@ void main(){
     if (ptsData.length < need) ptsData = new Float32Array(need);
     let n = 0;
     for (const d of dust) {
+      if (asOf && d.date > asOf) continue;
       const o = n++ * 6;
       ptsData[o] = d.x; ptsData[o + 1] = d.y; ptsData[o + 2] = d.cls; ptsData[o + 3] = 3; ptsData[o + 4] = 0; ptsData[o + 5] = 0;
     }
@@ -1846,12 +1955,12 @@ void main(){
       ptsData[o] = b.wx; ptsData[o + 1] = b.wy; ptsData[o + 2] = b.cls; ptsData[o + 3] = 4; ptsData[o + 4] = b.n; ptsData[o + 5] = 0;
     }
     for (const a of AGENTS) {
-      if (!a.used || a.hidden) continue;
+      if (!a.used || a.hidden || a.future) continue;
       const o = n++ * 6;
       ptsData[o] = a.x; ptsData[o + 1] = a.y; ptsData[o + 2] = a.cls;
       ptsData[o + 3] = a.api ? 1 : a.revoked ? 2 : 0;
       ptsData[o + 4] = a.i === selIdx ? 2 : a.i === hoverIdx ? 1 : 0;
-      ptsData[o + 5] = a.i === birthIdx && birthT < 2.5 && !reducedMotion ? 1 - birthT / 2.5 : 0;
+      ptsData[o + 5] = reducedMotion ? 0 : a.i === birthIdx && birthT < 2.5 ? 1 - birthT / 2.5 : a.bornT != null && clock - a.bornT < 1.6 ? 1 - (clock - a.bornT) / 1.6 : 0;
     }
     if (!n) return;
     const p = progPts, u = p.u;
@@ -1952,7 +2061,7 @@ void main(){
       const a = AGENTS[i], s = nodeLabels[i];
       const hot = i === selIdx || i === hoverIdx;
       let vis = 0;
-      if (a.used && glOK && !a.hidden && !(filterCls && a.cls !== filterCls) && (hot || shown < budget)) {
+      if (a.used && glOK && !a.hidden && !a.future && !(filterCls && a.cls !== filterCls) && (hot || shown < budget)) {
         const [x, y] = toScreen(a.x, a.y);
         const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;
         const onScreen = x > 4 && x < W - 4 && y > headerBottom && y < H - 20;

@@ -94,6 +94,20 @@ unknown. The inspector shows the size *and how it's known*, the lineage
 (click the base to jump to it), and how many derivatives the registry holds;
 selecting a model draws lines to its base and derivatives on the map.
 
+**Axes.** `x` is the class band. `y` is chosen in the view bar (and kept in
+the URL as `?y=`): **ADOPTION** — open weights by download rank, API-only
+models (no download counts) in a strip by release date; **RELEASED** — every
+model by publication date on one axis; **SIZE** — open weights by parameter
+count on a log scale (10M → 1T), API-only models (sizes unpublished) in a
+strip. Restricted models mirror below the plane on the same measure.
+**`z` is time:** the timeline sets an *as of* month (`?asof=YYYY-MM`) — models
+published later don't exist yet, on the sky or in the registry list — and ▶
+plays the whole history in ~24 s, each star flaring as it appears. Dates are
+Hugging Face `createdAt` / OpenRouter `created`; the Hub dates every repo
+older than March 2022 as 2022-03-02, so those all appear at the start. The
+fit stretches x and y independently (x is categorical), so the plot fills
+the space between the panels.
+
 **The whole registry on the sky.** The 192 plotted models are stars; every
 other ingested model (~450) is faint dust in its class band, on the same axes.
 Dense groups collapse into a counted bubble — click it (or zoom) to open it.

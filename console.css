@@ -418,3 +418,25 @@ button.ro-row:focus-visible,button.lg-row:focus-visible,.cls-mark:focus-visible,
 .in-jump:hover{text-decoration:underline}
 .bubble-n{position:absolute;left:0;top:0;font-size:10px;font-weight:700;letter-spacing:.04em;pointer-events:none;
   text-shadow:0 0 4px #000,0 0 2px #000;font-variant-numeric:tabular-nums;will-change:transform}
+
+/* ---------- view bar: y axis + time (z) ---------- */
+.viewbar{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;gap:16px;align-items:center;
+  padding:7px 12px;border:1px solid var(--line);background:rgba(2,8,7,.84);backdrop-filter:blur(8px);z-index:6}
+.vb-group{display:flex;align-items:center;gap:4px}
+.vb-k{color:var(--dim);font-size:9.5px;letter-spacing:.24em;margin-right:6px}
+.viewbar button{background:none;border:1px solid transparent;color:var(--dim);font:inherit;font-size:9.5px;letter-spacing:.16em;
+  padding:4px 7px;cursor:pointer}
+.viewbar button:hover{color:var(--ink);border-color:var(--line)}
+.viewbar button[aria-pressed=true]{color:var(--amber);border-color:rgba(63,217,178,.45);background:rgba(63,217,178,.08)}
+.viewbar button:focus-visible,#tl:focus-visible{outline:1px solid var(--amber);outline-offset:1px}
+#tl-play{width:30px;color:var(--amber)!important}
+#tl{width:200px;accent-color:var(--amber);background:transparent}
+.vb-v{min-width:118px;color:var(--ink);font-size:9.5px;letter-spacing:.16em;font-variant-numeric:tabular-nums}
+@media (max-width:900px),(pointer:coarse){
+  .viewbar{left:0;right:0;transform:none;bottom:calc(46px + env(safe-area-inset-bottom));flex-wrap:wrap;gap:6px 12px;
+    justify-content:center;border-width:1px 0 0;padding:6px 8px}
+  #tl{width:120px}
+  .vb-v{min-width:0}
+  .sheet-roster .viewbar,.sheet-legend .viewbar{display:none}
+}
+.bare .viewbar{display:flex}
