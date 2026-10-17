@@ -60,7 +60,8 @@
      not the slot. Empty slots draw nothing. */
   const EY = .34, ZOOM = 1.05;
   const AGENTS = [];
-  for (let i = 0; i < 128; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
+  const NODES = 192, API_SLOTS = 64;
+  for (let i = 0; i < NODES; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
 
   async function manifestHash(m) {
     const raw = JSON.stringify({ id: m.id, sha: m.sha || null, tags: m.tags, pt: m.pipeline_tag, gated: !!m.gated });
@@ -75,9 +76,18 @@
     a.x = bandX(mo.cls, bandFrac(mo)) + (fr(i * 7.13 + .13) - .5) * .02;
     a.enriched = false;
     a.name = mo.m.id; a.downloads = mo.downloads || 0; a.likes = mo.m.likes || 0;
+    a.api = !!mo.api;
+    if (a.api) {
+      a.provider = CLOSED_PROVIDER[mo.m.id.split('/')[0]] || mo.m.id.split('/')[0];
+      a.created = mo.m.created || 0; a.context = mo.m.context_length || 0;
+      a.pricing = mo.m.pricing || {}; a.modality = mo.m.architecture?.modality || '';
+      a.caps = (mo.m.supported_parameters || []).filter(p => /^(tools|reasoning|structured_outputs|response_format|web_search)$/.test(p));
+      a.arena = (mo.m.benchmarks?.design_arena || []).slice().sort((p, q) => (p.rank || 99) - (q.rank || 99)).slice(0, 4);
+      a.displayName = mo.m.name || mo.m.id;
+    }
     a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
     a.source = 'huggingface'; a.steps = mo.steps; a.gated = mo.m.gated || false; a.files = undefined;
-    a.license = (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
+    a.license = a.api ? 'proprietary — provider API terms' : (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
     a.why = mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
     a.hash = '';
     const name = a.name;
@@ -156,18 +166,52 @@
         if (flops >= 1e25 && cls < 7) { cls = 7; steps.push('≥1×10^25 FLOP (EU AI Act systemic-risk presumption) → CLASS VII'); }
       }
     }
-    /* VII–X — sourced claims in the evidence register */
-    for (const e of register) {
-      if (!e.models.some(x => x.toLowerCase() === id) || e.class <= cls) continue;
-      cls = e.class;
-      steps.push(`register: ${e.publisher}, ${e.date} — "${e.quote}" → CLASS ${RN[cls - 1]}`);
-    }
+    cls = applyRegister(id, cls, steps);
     const unsafe = !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
     if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
     else if (unsafe) steps.push('no safetensors → restricted');
     else steps.push('self-attested manifest');
     return { cls, unsafe, steps, score, flops, agent };
   }
+  /* VII–X — sourced claims in the evidence register */
+  function applyRegister(id, cls, steps) {
+    for (const e of register) {
+      if (!e.models.some(x => x.toLowerCase() === id) || e.class <= cls) continue;
+      cls = e.class;
+      steps.push(`register: ${e.publisher}, ${e.date} — "${e.quote}" → CLASS ${RN[cls - 1]}`);
+    }
+    return cls;
+  }
+
+  /* API-only models (OpenRouter's registry, no Hugging Face weights): the
+     provider publishes capabilities, not parameters — so the class comes from
+     what the model declares it supports. Reasoning-trained → V. */
+  const CLOSED_PROVIDER = { openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', 'x-ai': 'xAI', mistralai: 'Mistral', deepseek: 'DeepSeek', moonshotai: 'Moonshot', qwen: 'Alibaba Qwen', amazon: 'Amazon', cohere: 'Cohere', perplexity: 'Perplexity', meta: 'Meta', 'meta-llama': 'Meta', 'z-ai': 'Zhipu', minimax: 'MiniMax', 'bytedance-seed': 'ByteDance Seed', inception: 'Inception', upstage: 'Upstage', ai21: 'AI21' };
+  const FRONTIER_LABS = new Set(['openai', 'anthropic', 'google', 'x-ai', 'mistralai', 'deepseek', 'moonshotai', 'qwen', 'amazon', 'meta', 'meta-llama', 'z-ai', 'minimax', 'bytedance-seed', 'cohere']);
+  function classifyApiModel(m) {
+    const id = m.id.toLowerCase(), sp = m.supported_parameters || [];
+    const ins = m.architecture?.input_modalities || [], outs = m.architecture?.output_modalities || ['text'];
+    const tools = sp.includes('tools'), reasoning = sp.includes('reasoning') || sp.includes('include_reasoning');
+    const mm = ins.some(x => x !== 'text' && x !== 'file') || outs.some(x => x !== 'text');
+    const steps = ['API-only — weights and parameter count not published'];
+    let score = .40; steps.push('generative API model → base 0.40');
+    if (tools) { score += .09; steps.push('declares tool calling +0.09'); }
+    if (mm) { score += .10; steps.push(`multimodal (${[...new Set([...ins, ...outs])].filter(x => x !== 'text').join(', ')}) +0.10`); }
+    /* size is unpublished; the output price tier is the scale signal providers do publish */
+    const out = +(m.pricing?.completion || 0) * 1e6;
+    if (reasoning && out >= 8) { score = Math.max(score, .80 + (tools ? .06 : 0) + (mm ? .06 : 0)); steps.push(`reasoning-trained, flagship price tier ($${out.toFixed(2)}/1M out) → frontier-scale floor 0.80`); }
+    else if (reasoning) { score += .12; steps.push(`reasoning-trained, ${out ? `$${out.toFixed(2)}/1M out` : 'unpriced'} — below the flagship tier ($8) → +0.12`); }
+    score = Math.min(1, score);
+    let cls = score < .15 ? 1 : score < .35 ? 2 : score < .58 ? 3 : score < .78 ? 4 : 5;
+    steps.push(`score ${score.toFixed(2)} → CLASS ${RN[cls - 1]}`);
+    cls = applyRegister(id, cls, steps);
+    return { cls, unsafe: false, steps, score, flops: 0, api: true };
+  }
+  const apiRec = m => ({ m: { ...m, api: true }, ...classifyApiModel(m), downloads: 0, api: true });
+  /* OpenRouter lists every model it routes; the ones with no Hugging Face id are API-only */
+  const isApiOnly = m => m.id && !m.hugging_face_id && !m.id.startsWith('~') && !m.id.startsWith('openrouter/') && !m.id.includes(':');
+  let orByHf = new Map();   // hugging_face_id → OpenRouter id (open models with a hosted API)
+
   /* where inside its band a model sits */
   function bandFrac(mo) {
     if (mo.cls <= 5) { const lo = SCORE_EDGES[mo.cls - 1], hi = SCORE_EDGES[mo.cls]; return ((mo.score ?? lo) - lo) / (hi - lo); }
@@ -182,6 +226,15 @@
     census = recs;
     registryTotal = recs.length;
     AGENTS.forEach(a => { a.used = false; });
+    /* API-only models from the frontier labs: newest first, at most 8 per lab
+       (every API model stays in the census — searchable, placeable) */
+    const perProv = {};
+    const apis = recs.filter(mo => mo.api && FRONTIER_LABS.has(mo.m.id.split('/')[0])).sort((p, q) => (q.m.created || 0) - (p.m.created || 0))
+      .filter(mo => { const p = mo.m.id.split('/')[0]; perProv[p] = (perProv[p] || 0) + 1; return perProv[p] <= 8; })
+      .slice(0, API_SLOTS);
+    let j = NODES - API_SLOTS;
+    for (const mo of apis) placeModel(mo, j++);
+    recs = recs.filter(mo => !mo.api);
     const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
     const byCls = c => ok.filter(mo => mo.cls === c);
     let i = 0;
@@ -189,7 +242,7 @@
     /* backfill to the node ceiling — every fetched model registers regardless */
     const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
     for (const mo of ok) { if (i >= 124) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
-    for (const mo of bad.slice(0, 4)) { if (i >= 128) break; placeModel(mo, i++); }
+    for (const mo of bad.slice(0, 4)) { if (i >= NODES - API_SLOTS) break; placeModel(mo, i++); }
     refresh();
     fitView();
     if (!cxStat.classList.contains('ok')) idleStatus();
@@ -198,13 +251,13 @@
   async function loadRegistry() {
     /* 0 — the evidence register (sourced claims for VII–X) */
     try { register = (await fetch('evidence.json').then(r => r.json())).entries || []; } catch { register = []; }
-    /* 1 — bundled snapshot of real HF model cards: the map is never empty */
+    /* 1 — bundled snapshot of real model records: the map is never empty */
     try {
       const snap = await fetch('catalog.json').then(r => r.json());
       const recs = snap.models.map(e => {
         const m2 = { id: e.id, tags: e.tags || [], pipeline_tag: e.pt, gated: e.gated, downloads: e.dl };
         return { m: m2, ...classifyModel(m2), downloads: e.dl || 0 };
-      });
+      }).concat((snap.api || []).map(apiRec));
       fillRegistry(recs);
       $('st-src').textContent = 'SNAPSHOT';
     } catch { }
@@ -221,7 +274,12 @@
         'https://huggingface.co/api/models?author=mistralai&sort=downloads&direction=-1&limit=40&full=false',
         'https://huggingface.co/api/models?author=nvidia&sort=downloads&direction=-1&limit=40&full=false',
       ];
-      const lists = await Promise.all(urls.map(u => fetch(u).then(r => r.json())));
+      const [lists, or] = await Promise.all([
+        Promise.all(urls.map(u => fetch(u).then(r => r.json()))),
+        fetch('https://openrouter.ai/api/v1/models').then(r => r.json()).catch(() => null),
+      ]);
+      const orData = or?.data || [];
+      orByHf = new Map(orData.filter(m => m.hugging_face_id).map(m => [m.hugging_face_id.toLowerCase(), m.id]));
       const seen = new Set(), models = [];
       for (const l of lists) for (const m of l) {
         if (!m.id || seen.has(m.id)) continue;
@@ -229,7 +287,8 @@
         models.push({ m, ...classifyModel(m), downloads: m.downloads || 0, likes: m.likes || 0 });
       }
       models.sort((a, b) => b.downloads - a.downloads);
-      fillRegistry(models);
+      const apis = orData.filter(isApiOnly).map(apiRec);
+      fillRegistry(apis.length ? models.concat(apis) : models.concat(census.filter(r => r.api)));
       $('st-src').textContent = 'LIVE';
     } catch { }
   }
@@ -259,7 +318,7 @@
     let i = slotOf(rec.m.id);
     if (i < 0) {
       const slot = AGENTS.find(a => !a.used) ||
-        AGENTS.filter(a => a.revoked === rec.unsafe && a.i !== selIdx).sort((x, y) => x.downloads - y.downloads)[0];
+        AGENTS.filter(a => a.revoked === rec.unsafe && a.api === !!rec.api && a.i !== selIdx).sort((x, y) => (x.api ? x.created - y.created : x.downloads - y.downloads))[0];
       placeModel(rec, slot.i);
       i = slot.i; birthIdx = i; birthT = 0;
       if (!census.some(r => r.m.id === rec.m.id)) { census.push(rec); registryTotal = census.length; }
@@ -274,7 +333,9 @@
   async function classifyId(raw) {
     const id = normId(raw);
     if (!id) return;
-    const known = slotOf(id);
+    const inCensus = census.find(r => r.m.id.toLowerCase() === id.toLowerCase());
+    if (inCensus && slotOf(inCensus.m.id) < 0) { addToMap(inCensus); finishSearch(); return; }
+    const known = slotOf(inCensus ? inCensus.m.id : id);
     if (known >= 0) { addToMap(census.find(r => r.m.id === id) || { m: { id }, cls: AGENTS[known].cls, unsafe: AGENTS[known].revoked }); finishSearch(); return; }
     status('classifying…', 'busy');
     try {
@@ -384,7 +445,7 @@
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (active >= 0) choose(active);
-      else if (results.length && !/\//.test(cxIn.value)) choose(0);
+      else if (results.length) choose(0);
       else if (cxIn.value.trim()) classifyId(cxIn.value);
     } else if (e.key === 'Escape') {
       e.stopPropagation();
@@ -400,7 +461,7 @@
   addEventListener('keydown', e => {
     if (document.activeElement === cxIn) return;
     if (e.key === '/' ) { e.preventDefault(); cxIn.focus(); }
-    else if (e.key === 'Escape') { select(-1); setSheet(null); }
+    else if (e.key === 'Escape') { if (!closeKeyModal()) { select(-1); setSheet(null); } }
     else if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey) toggleFullscreen();
     else if ((e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey) { document.body.classList.toggle('bare'); fitView(); }
   });
@@ -422,10 +483,10 @@ uniform float Birth, BirthT;
 uniform vec2 PTR, PAN;
 uniform float VX, NS;
 
-/* registry texture — 512x1 RGBA8. 2 texels per node:
+/* registry texture — 1024x1 RGBA8. 2 texels per node (192 nodes):
    A: x,y as 16-bit (x/1.2, y/0.8).  B: cls*25 (1..10), revoked, vacant, -.
-   texels 256+: edges as node-index pairs (255 = empty). */
-vec4 nTex(int i){ return texture2D(Nodes, vec2((float(i)+.5)/512., .5)); }
+   texels 512+: edges as node-index pairs (255 = empty). */
+vec4 nTex(int i){ return texture2D(Nodes, vec2((float(i)+.5)/1024., .5)); }
 vec2 nPos(vec4 t){
   return vec2((t.r*65280.+t.g*255.)/65535.*1.2,
               (t.b*65280.+t.a*255.)/65535.*.8);
@@ -489,7 +550,7 @@ void main(){
   /* ---- the registry ---- */
   float classInk=0.;
   float zk=pow(Zoom,-.75), NZ=NS*zk;
-  for(int i=0;i<128;i++){
+  for(int i=0;i<192;i++){
     vec4 na=nTex(i*2), nb=nTex(i*2+1);
     if(nb.b>.5) continue;
     vec2 ap=nPos(na);
@@ -517,7 +578,7 @@ void main(){
     lum+=exp(-r*30.)*rec*.9;
     lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
     /* attestation halo */
-    float hon=clamp(Net*1.5-float(i)/128.,0.,1.);
+    float hon=clamp(Net*1.5-float(i)/192.,0.,1.);
     float ring=smoothstep(.0045*zk,.0012*zk,abs(r-(.021+.002*cls)*NZ))*hon*.75*fdim;
     lum+=ring;
     classInk=max(classInk,step(.06,core+glow+ring)*cls*.1);
@@ -542,9 +603,9 @@ void main(){
   for(int e=0;e<48;e++){
     float pe=clamp(Net*4.-float(e)*.08,0.,1.);
     if(pe<=0.) continue;
-    vec4 et=nTex(256+e);
+    vec4 et=nTex(512+e);
     int ia=int(floor(et.r*255.+.5)), ib=int(floor(et.g*255.+.5));
-    if(ia>127) continue;
+    if(ia>191) continue;
     vec2 A=nPos(nTex(ia*2)), B=nPos(nTex(ib*2));
     vec2 abv=B-A; float L2=dot(abv,abv)+1e-5;
     float tt=clamp(dot(puv-A,abv)/L2,0.,pe);
@@ -816,7 +877,7 @@ void main(){
     s.title = `Class ${k.rn} · ${k.name} — criteria`;
     s.dataset.c = c;
     s.dataset.x = BX0 + (c - .5) * BW;
-    s.dataset.y = EY + .6;
+    s.dataset.y = EY + .76;
     s.style.cssText = `--c:${k.hex}`;
     s.addEventListener('click', () => openClassInfo(c));
     labelsEl.appendChild(s);
@@ -840,6 +901,7 @@ void main(){
     ['CAPABILITY SCORE →', .91, EY + .025, 'translate(-100%,-50%)'],
     ['↑ ADOPTION · download rank', .02, EY + .26, 'translate(0,-50%) rotate(-90deg) translate(0,-100%)'],
     ['CERTIFICATION PLANE', .02, EY + .032, 'translate(0,-50%)'],
+    ['API-ONLY · NEWEST ↑', .02, EY + .65, 'translate(0,-50%)'],
   ].map(([txt, x, y, tf]) => {
     const s = document.createElement('span');
     s.textContent = txt; s.dataset.x = x; s.dataset.y = y; s.dataset.tf = tf;
@@ -927,7 +989,7 @@ void main(){
     const live = AGENTS.filter(a => a.used);
     if (!live.length || userCam) return;
     const xs = live.map(a => a.x), ys = live.map(a => a.y);
-    const x0 = Math.min(...xs, BX0 - .01), x1 = Math.max(...xs, BX0 + NCLS * BW + .01), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .62);
+    const x0 = Math.min(...xs, BX0 - .01), x1 = Math.max(...xs, BX0 + NCLS * BW + .01), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .84);
     const topH = document.querySelector('.top').getBoundingClientRect().bottom;
     let L = 24, R = 24, B = mobile ? 70 : 40;
     const T = topH + 24;
@@ -1139,7 +1201,7 @@ void main(){
      Classes VI and VII need this evidence, so the model is re-classified with
      it — and moves to its new band if the class changes. */
   async function enrichCard(a) {
-    if (a.bench !== undefined) return false;
+    if (a.api || a.bench !== undefined) return false;
     a.bench = null;
     const name = a.name;
     try {
@@ -1173,13 +1235,33 @@ void main(){
     const a = AGENTS[i];
     if (!a.used) return;
     insp.style.display = 'block';
-    $('in-name').textContent = a.name;
     $('in-cls').textContent = `CLASS ${RN[a.cls - 1]} · ${CLS_NAME[a.cls - 1]}`;
     $('in-cls').style.color = CLS_HEX[a.cls - 1];
-    let body =
-      `<div class="in-act"><button type="button" id="in-dl" aria-expanded="false">⇩ DOWNLOAD WEIGHTS</button>` +
-      `<a href="https://huggingface.co/${a.name}" target="_blank" rel="noopener">MODEL CARD ↗</a></div>` +
-      `<div class="in-files" id="in-files" hidden></div>` +
+    $('in-name').textContent = a.api ? a.displayName : a.name;
+    const act = `<div class="in-act"><button type="button" id="in-key">⚿ GET API KEY</button>` +
+      (a.api ? `<a href="https://openrouter.ai/${esc(a.name)}" target="_blank" rel="noopener">OPENROUTER ↗</a>`
+             : `<a href="https://huggingface.co/${esc(a.name)}" target="_blank" rel="noopener">MODEL CARD ↗</a>`) + `</div>`;
+    if (a.api) {
+      const usd = v => v == null || v === '' ? '—' : `$${(+v * 1e6).toFixed(+v * 1e6 < 1 ? 2 : 2)}`;
+      $('in-body').innerHTML = act +
+        `<div class="in-row"><span>ACCESS</span><b>API-ONLY · CLOSED WEIGHTS</b></div>` +
+        `<div class="in-row"><span>PROVIDER</span><b>${esc(a.provider)}</b></div>` +
+        `<div class="in-row"><span>ID</span><b>${esc(a.name)}</b></div>` +
+        `<div class="in-row"><span>MODALITY</span><b>${esc(a.modality || '—')}</b></div>` +
+        `<div class="in-row"><span>CONTEXT</span><b>${a.context ? (a.context >= 1e6 ? (a.context / 1e6).toFixed(a.context % 1e6 ? 1 : 0) + 'M' : Math.round(a.context / 1e3) + 'K') + ' tokens' : '—'}</b></div>` +
+        `<div class="in-row"><span>PRICE / 1M</span><b>${usd(a.pricing.prompt)} in · ${usd(a.pricing.completion)} out</b></div>` +
+        `<div class="in-row"><span>DECLARES</span><b>${esc(a.caps.join(', ') || '—')}</b></div>` +
+        `<div class="in-row"><span>RELEASED</span><b>${a.created ? new Date(a.created * 1000).toISOString().slice(0, 10) : '—'}</b></div>` +
+        `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
+        `<div class="in-sec">CLASSIFICATION EVIDENCE</div>` +
+        `<div class="in-ev" id="in-ev">${(a.steps || []).map(esc).join('<br>')}</div>` +
+        `<div class="in-sec">ARENA — THIRD-PARTY (DESIGN ARENA, VIA OPENROUTER)</div>` +
+        (a.arena.length ? a.arena.map(b2 => `<div class="in-row"><span>${esc(b2.category)}</span><b>Elo ${b2.elo} · #${b2.rank}</b></div>`).join('') : '<div class="in-note">none listed</div>') +
+        `<div class="in-note">Source: openrouter.ai/api/v1/models — the provider publishes capabilities and prices, not parameters or training compute.</div>`;
+      $('in-key').onclick = () => openKeyModal(a);
+      return;
+    }
+    let body = act +
       `<div class="in-row"><span>STATUS</span><b class="${a.revoked ? 'bad' : 'ok'}">${a.revoked ? (a.why || 'RESTRICTED').toUpperCase() : 'SELF-ATTESTED'}</b></div>` +
       `<div class="in-row"><span>PIPELINE</span><b>${a.pipeline || '—'}</b></div>` +
       `<div class="in-row"><span>DOWNLOADS</span><b>${fmtDl(a.downloads)}/mo · ♥${a.likes || 0}</b></div>` +
@@ -1192,7 +1274,7 @@ void main(){
       `<div class="in-sec">BENCHMARKS — SELF-REPORTED</div>` +
       `<div class="in-bench" id="in-bench">${a.bench === null ? '—' : 'loading…'}</div>`;
     $('in-body').innerHTML = body;
-    $('in-dl').onclick = () => toggleFiles(a);
+    $('in-key').onclick = () => openKeyModal(a);
     if (a.bench === undefined) enrichCard(a).then(moved => {
       if (selIdx !== a.i) return;
       if (moved) { openInspector(a.i); return; }
@@ -1301,20 +1383,73 @@ void main(){
           `<div class="in-note">opens chat.vims.com Deploy: a GPU server on your own cloud account, controlled by your identity; chat with the model when it's serving.</div>`
         : `<div class="in-note bad">needs more than one GPU's memory — single-GPU nodes can't serve it yet.</div>`);
   }
-  async function toggleFiles(a) {
-    const el = $('in-files'), btn = $('in-dl');
-    if (!el) return;
-    if (!el.hidden) { el.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.textContent = '⇩ DOWNLOAD WEIGHTS'; return; }
-    el.hidden = false; btn.setAttribute('aria-expanded', 'true'); btn.textContent = '▴ HIDE FILES';
+  /* the repo's files + the GPU-node estimate, into el */
+  async function fillRun(a, el) {
     if (!a.files) {
       el.innerHTML = '<div class="in-note">listing repository…</div>';
       try { await loadFiles(a); } catch (e) {
-        if (selIdx === a.i) el.innerHTML = `<div class="in-note bad">✗ ${e.message === 'Failed to fetch' ? 'hub unreachable' : esc(e.message)}</div>`;
+        el.innerHTML = `<div class="in-note bad">✗ ${e.message === 'Failed to fetch' ? 'hub unreachable' : esc(e.message)}</div>`;
         return;
       }
     }
-    if (selIdx === a.i && !el.hidden) renderFiles(a, el);
+    renderFiles(a, el);
   }
+
+  /* ---- GET API KEY — where to get a key for this model, and where to use it ---- */
+  const NATIVE_KEYS = {   // providers chat.vims.com and VIMS desktop call directly with your key
+    openai: { label: 'OpenAI', url: 'https://platform.openai.com/api-keys' },
+    anthropic: { label: 'Anthropic', url: 'https://console.anthropic.com/settings/keys' },
+    google: { label: 'Google AI Studio', url: 'https://aistudio.google.com/app/apikey' },
+    'x-ai': { label: 'xAI', url: 'https://console.x.ai/' },
+    mistralai: { label: 'Mistral', url: 'https://console.mistral.ai/api-keys' },
+    deepseek: { label: 'DeepSeek', url: 'https://platform.deepseek.com/api_keys' },
+    moonshotai: { label: 'Moonshot', url: 'https://platform.moonshot.ai/console/api-keys' },
+  };
+  const keyModal = $('key-modal');
+  let modalReturn = null;
+  function openKeyModal(a) {
+    const orId = a.api ? a.name : orByHf.get(a.name.toLowerCase());
+    const native = a.api ? NATIVE_KEYS[a.name.split('/')[0]] : null;
+    const chatUrl = orId ? `https://chat.vims.com/?use=${encodeURIComponent('openrouter:' + orId)}` : 'https://chat.vims.com/';
+    $('mo-title').textContent = a.api ? a.displayName : a.name;
+    $('mo-sub').textContent = `CLASS ${RN[a.cls - 1]} · ${CLS_NAME[a.cls - 1]}${a.api ? ' · API-ONLY' : ''}`;
+    $('mo-sub').style.color = CLS_HEX[a.cls - 1];
+    $('mo-body').innerHTML =
+      `<div class="mo-step"><i>1</i>GET AN API KEY</div>` +
+      (orId ? `<a class="mo-opt" href="https://openrouter.ai/keys" target="_blank" rel="noopener"><b>OpenRouter</b><span>one key for every model it serves — including <code>${esc(orId)}</code></span><em>GET KEY ↗</em></a>` : '') +
+      (native ? `<a class="mo-opt" href="${native.url}" target="_blank" rel="noopener"><b>${esc(native.label)}</b><span>straight from the provider — pick the model in chat's ${esc(native.label)} list</span><em>GET KEY ↗</em></a>` : '') +
+      (!orId && !native ? `<div class="in-note">No hosted API lists <code>${esc(a.name)}</code> — run it yourself below: download the weights, or serve it on a GPU node of your own.</div>` : '') +
+      `<div class="mo-step"><i>2</i>USE IT</div>` +
+      (orId ? `<a class="mo-go" href="${chatUrl}" target="_blank" rel="noopener">CHAT WITH IT ON CHAT.VIMS.COM →<span>opens chat with this model selected — paste your key when it asks</span></a>` : '') +
+      `<a class="mo-go alt" href="https://vims.com/download" target="_blank" rel="noopener">USE YOUR KEY IN VIMS DESKTOP ↓<span>download the app, add the key in its Key Manager</span></a>` +
+      `<div class="in-note">Your key lives in your own vault (keys.vims.com) and is sent only to the provider — VIMS servers never see it or your prompts.</div>` +
+      (a.api ? '' : `<details class="mo-run" id="mo-run"${orId || native ? '' : ' open'}><summary>RUN IT YOURSELF — WEIGHTS · GPU NODE</summary><div id="mo-files"></div></details>`);
+    const run = $('mo-run');
+    if (run) {
+      const load = () => { if (!run.dataset.loaded) { run.dataset.loaded = '1'; fillRun(a, $('mo-files')); } };
+      if (run.open) load();
+      run.addEventListener('toggle', () => { if (run.open) load(); });
+    }
+    modalReturn = document.activeElement;
+    keyModal.hidden = false;
+    keyModal.querySelector('.mo-card').focus();
+  }
+  function closeKeyModal() {
+    if (keyModal.hidden) return false;
+    keyModal.hidden = true;
+    modalReturn?.focus?.();
+    return true;
+  }
+  $('mo-x').onclick = closeKeyModal;
+  keyModal.addEventListener('click', e => { if (e.target === keyModal) closeKeyModal(); });
+  keyModal.addEventListener('click', async e => {
+    const b = e.target.closest('.in-copy');
+    if (!b) return;
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'COPIED'; }
+    catch { b.textContent = 'SELECT ↑'; }
+    setTimeout(() => { b.textContent = 'COPY'; }, 1400);
+  });
+
   insp.addEventListener('click', async e => {
     const b = e.target.closest('.in-copy');
     if (!b) return;
@@ -1340,11 +1475,11 @@ void main(){
 
   /* registry texture — the sky renders actual node data, not uniform
      arrays. Uniform-vector ceilings can't cap the node count. */
-  const nodeData = new Uint8Array(512 * 4);
+  const nodeData = new Uint8Array(1024 * 4);
   function uploadNodes() {
     if (!glOK) return;
     gl.bindTexture(gl.TEXTURE_2D, nodeTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1024, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
   }
   function syncStars() {
     AGENTS.forEach((a, i) => {
@@ -1358,7 +1493,7 @@ void main(){
       nodeData[o + 6] = a.used ? 0 : 255;
       nodeData[o + 7] = 0;
     });
-    nodeData.fill(255, 256 * 4);
+    nodeData.fill(255, 512 * 4);
     const live = AGENTS.filter(a => a.used).map(a => a.i);
     const pairs = [];
     for (let k = 0; k + 2 < live.length && pairs.length < 44; k++) pairs.push([live[k], live[k + 2]]);
@@ -1368,15 +1503,20 @@ void main(){
       if (ai !== bi) pairs.push([ai, bi]);
     }
     pairs.slice(0, 48).forEach(([a, b], e) => {
-      nodeData[(256 + e) * 4] = a; nodeData[(256 + e) * 4 + 1] = b;
+      nodeData[(512 + e) * 4] = a; nodeData[(512 + e) * 4 + 1] = b;
     });
     uploadNodes();
   }
   /* H–R y-axis: adoption = download rank among plotted models.
      Attested rise above the plane, restricted mirror below it. */
   function layoutAdoption() {
+    /* API-only models have no download counts: their own strip, ordered by release date */
+    const apis = AGENTS.filter(a => a.used && a.api).sort((p, q) => p.created - q.created);
+    apis.forEach((a, k) => {
+      a.y = EY + .6 + .1 * (apis.length > 1 ? k / (apis.length - 1) : .5) + (fr(a.i * 3.77 + .41) - .5) * .015;
+    });
     for (const bad of [false, true]) {
-      const set = AGENTS.filter(a => a.used && a.revoked === bad).sort((p, q) => p.downloads - q.downloads);
+      const set = AGENTS.filter(a => a.used && !a.api && a.revoked === bad).sort((p, q) => p.downloads - q.downloads);
       set.forEach((a, k) => {
         const ad = set.length > 1 ? k / (set.length - 1) : .5;
         a.y = bad
@@ -1511,7 +1651,7 @@ void main(){
     for (const s of labels) {
       const c = +s.dataset.c;
       const [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
-      s.style.transform = `translate(${x}px,${y}px) translate(-50%,-190%)`;
+      s.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
       s.style.opacity = !glOK ? 0 : filterCls && c !== filterCls ? .12 : 1;
     }
     for (const d of bandEdges) d.style.transform = `translateX(${toScreen(+d.dataset.x, 0)[0]}px)`;
@@ -1531,7 +1671,7 @@ void main(){
     if (hoverIdx >= 0 && hoverIdx !== selIdx) order.push(hoverIdx);
     for (let i = 0; i < AGENTS.length; i++) if (i !== selIdx && i !== hoverIdx) order.push(i);
     rects.length = 0;
-    const budget = mobile ? (zoom > 1.6 ? 40 : zoom > 1.2 ? 16 : 8) : (zoom > 1.4 ? 128 : zoom > 1.05 ? 48 : 24);
+    const budget = mobile ? (zoom > 1.6 ? 40 : zoom > 1.2 ? 16 : 8) : (zoom > 1.4 ? NODES : zoom > 1.05 ? 56 : 28);
     let shown = 0;
     for (const i of order) {
       const a = AGENTS[i], s = nodeLabels[i];

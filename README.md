@@ -35,6 +35,15 @@ deterministically from its model-card metadata:
 | multimodal | `+0.10` | `pipeline_tag`, tags |
 | reasoning | `+0.10` | `r1`/`o1`/`thinking` in id |
 
+**API-only models** (closed weights — GPT, Claude, Gemini, Grok…) publish
+capabilities and prices, not parameters: their class comes from what they
+declare (tool calling `+0.09`, multimodal `+0.10`, base `0.40` as generative
+models) and reasoning-trained models reach V only in the flagship price tier
+(≥ $8 per 1M output tokens) — below it they get `+0.12`. They sit in their own
+strip above the open models, ordered by release date (no download counts to
+rank by); their inspector shows modality, context, price, declared
+capabilities and third-party arena results (Design Arena, via OpenRouter).
+
 The sky is an H–R diagram over the registry:
 
 - **x = class band** — ten bands left to right; I–V are placed inside their
@@ -50,7 +59,7 @@ The sky is an H–R diagram over the registry:
 | II · BOUNDED | metadata | translation, speech-to-text, summarisation, QA | score `< 0.35` |
 | III · GENERATIVE | metadata | open-ended generation | score `< 0.58` |
 | IV · TOOL-USING | metadata | tool calling, code, multimodal | score `< 0.78` |
-| V · FRONTIER-SCALE | metadata | ≥60B parameters, reasoning-trained | score `≥ 0.78` |
+| V · FRONTIER-SCALE | metadata | ≥60B parameters, or a reasoning-trained API model in the flagship price tier | score `≥ 0.78` |
 | VI · AUTONOMOUS | model card | trained for long-horizon agent work | specific agent tags (computer-use, GUI/web/browser/SWE/OS agent), a known agent model, or agentic benchmarks (SWE-bench, OSWorld, WebArena, GAIA, τ-bench, Terminal-Bench) in its self-reported results — on a generative (III+) base |
 | VII · SYSTEMIC | model card / register | training compute ≥ 10²⁵ FLOP — the EU AI Act's presumption of systemic risk for general-purpose models | `6 × active parameters × training tokens`, when the card states its token count (mixture-of-experts models use their active count — no estimate without one), or a published compute figure in `evidence.json` |
 | VIII · SELF-IMPROVING | register only | substantially accelerates AI R&D on its own | a developer system card or third-party evaluation reporting the AI R&D threshold crossed |
@@ -147,7 +156,16 @@ Portrait screens show a slice of the capability axis at zoom 1 — pan for the
 rest. Labels are collision-culled in priority order (selected → hovered →
 download rank), so dense regions only label what fits.
 
-**Download weights.** `⇩ DOWNLOAD WEIGHTS` on the inspector lists the repo's
+**Get API key.** `⚿ GET API KEY` on every model opens a modal: where to get a
+key for it — OpenRouter (one key for every model it serves; open models are
+matched to OpenRouter by their Hugging Face id) and, for the frontier labs,
+the provider's own key page — then where to use it: **chat.vims.com** opens
+with the model already selected (`?use=openrouter:<model>`; it asks for the
+key the first time, kept in your vault at keys.vims.com) or **VIMS desktop**
+(add the key in its Key Manager). Models no hosted API serves say so and open
+*run it yourself*.
+
+**Run it yourself** (open-weight models, inside the modal) lists the repo's
 real file tree (`/api/models/{id}/tree/main`): weight files with sizes and
 their LFS `sha256` (verify after download), one-click direct downloads, a
 copyable `hf download` command (for multi-quant GGUF repos, the smallest
@@ -164,6 +182,7 @@ from `cardData.model-index` (labeled as such — no independent eval runs here).
 | stage | source | notes |
 |---|---|---|
 | snapshot | `catalog.json` (bundled) | 22 real model cards, loads instantly |
+| frontier (API-only) | `openrouter.ai/api/v1/models` | every model OpenRouter routes with no Hugging Face id (closed weights) — ~190 after dropping `:variant` aliases; the frontier labs' newest (≤8 per lab) take 64 of the 192 map slots, all are searchable; bundled snapshot in `catalog.json` for offline |
 | live | `huggingface.co/api/models` | 9 cohorts — top downloads, text/text2text/image-text/ASR pipelines, meta-llama, deepseek-ai, mistralai, nvidia; deduped (~400 models); top 128 plotted; no auth, CORS-open |
 | classify | `huggingface.co/api/models/{id}` | on-demand per model |
 | card evidence | `/api/models/{id}?expand[]=cardData,safetensors,config…` + `/{id}/raw/main/README.md` | lazy, on inspect: benchmarks, exact parameters, stated training tokens, MoE active count |

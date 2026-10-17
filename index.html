@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="console.css?v=4">
+  <link rel="stylesheet" href="console.css?v=5">
 </head>
 <body>
 
@@ -56,6 +56,13 @@
 
     <div class="hint">DRAG · SCROLL ZOOM · CLICK A STAR<br>DRAG CARD HEADERS · DBL-CLICK RESETS<br>/ SEARCH · F FULLSCREEN · H HIDE PANELS</div>
 
+    <div class="modal" id="key-modal" hidden>
+      <div class="mo-card" role="dialog" aria-modal="true" aria-labelledby="mo-title" tabindex="-1">
+        <div class="mo-h"><div><div id="mo-title">—</div><div id="mo-sub"></div></div><button id="mo-x" aria-label="close">×</button></div>
+        <div class="mo-body" id="mo-body"></div>
+      </div>
+    </div>
+
     <nav class="mbar">
       <button data-sheet="roster">REGISTRY</button>
       <button data-sheet="legend">CLASSES</button>
@@ -63,6 +70,6 @@
     </nav>
   </div>
 
-  <script src="map.js?v=4"></script>
+  <script src="map.js?v=5"></script>
 </body>
 </html>
