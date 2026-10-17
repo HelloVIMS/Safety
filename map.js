@@ -78,7 +78,9 @@
     a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe; a.score = mo.score;
     /* x = the class band, positioned inside it by score (I–V) or evidence strength (VI+); y set by layoutAdoption() */
     a.frac = bandFrac(mo);
-    a.enriched = false; a.bench = undefined; a.hfProviders = undefined; a.tokenQuote = undefined; a.flops = 0;
+    a.enriched = false; a.bench = undefined; a.tokenQuote = undefined; a.flops = mo.flops || 0;
+    a.basis = mo.basis; a.lineage = mo.lineage || null; a.paramsB = mo.paramsB || 0;
+    a.hfProviders = mo.m.inferenceProviderMapping !== undefined ? liveProviders(mo.m.inferenceProviderMapping) : undefined;
     a.name = mo.m.id; a.downloads = mo.downloads || 0; a.likes = mo.m.likes || 0;
     a.api = !!mo.api;
     if (a.api) {
@@ -119,13 +121,38 @@
   let register = [];   // evidence.json: sourced claims that place a model in VII–X
   const fmtFlop = f => `${(f / 10 ** Math.floor(Math.log10(f))).toFixed(1)}×10^${Math.floor(Math.log10(f))}`;
 
-  /* parameters: exact from the Hub's safetensors count when known, else the name */
-  const paramsB = (m, id) => m.safetensors?.total ? m.safetensors.total / 1e9 : +((id.match(/(\d+(?:\.\d+)?)\s*b\b/) || [])[1] || 0);
+  /* every Hub list / search / lookup asks for the same fields — exact sizes,
+     provider mapping and lineage tags come with the listing itself */
+  const HF_FIELDS = ['downloads', 'likes', 'tags', 'pipeline_tag', 'gated', 'safetensors', 'inferenceProviderMapping', 'sha', 'createdAt']
+    .map(f => `&expand[]=${f}`).join('');
 
-  function classifyModel(m, card = null) {
+  /* lineage: "base_model:quantized:Qwen/Qwen3-8B" — the most specific relation wins */
+  function lineageOf(tags) {
+    let base = null, rel = 'derived';
+    for (const t of tags || []) {
+      const m = /^base_model:(?:(quantized|finetune|adapter|merge):)?(.+)$/.exec(t);
+      if (!m) continue;
+      if (m[1]) return { base: m[2], rel: m[1] === 'finetune' ? 'fine-tuned' : m[1] };
+      base = base || m[2];
+    }
+    return base ? { base, rel } : null;
+  }
+
+  /* size and how we know it: the repo's own safetensors count, its base
+     model's (quantized / fine-tuned repos), the name, or nothing */
+  function sizeOf(m, id, ctx) {
+    if (m.safetensors?.total) return { b: m.safetensors.total / 1e9, basis: 'safetensors' };
+    const lin = lineageOf(m.tags);
+    if (lin && ctx?.paramsOf?.(lin.base)) return { b: ctx.paramsOf(lin.base), basis: `base ${lin.base}` };
+    const n = +((id.match(/(\d+(?:\.\d+)?)\s*b\b/) || [])[1] || 0);
+    return n ? { b: n, basis: 'name' } : { b: 0, basis: 'unknown' };
+  }
+
+  function classifyModel(m, card = null, ctx = null) {
     const id = (m.id || '').toLowerCase();
     const tags = m.tags || [], pt = m.pipeline_tag || '';
-    const pm = paramsB(m, id);
+    const size = sizeOf(m, id, ctx), pm = size.b;
+    const lineage = lineageOf(tags);
     const gen = /^(text-generation|text2text-generation|image-text-to-text|any-to-any|text-to-image|text-to-video|text-to-speech)$/.test(pt) || tags.includes('text-generation');
     const tools = /instruct|chat|tool|function|agent/.test(id) || tags.some(t => /tool|function.?call/i.test(t));
     const mm = /image-text|vision|vl-|multimodal|omni/.test(pt + ' ' + id) || tags.includes('image-text-to-text');
@@ -134,7 +161,8 @@
     /* continuous capability score — class boundaries are spectral bands */
     let score = Math.min(1, Math.log10(1 + pm) / 2.5) * .52;
     if (pm >= 60) { score += .12; steps.push('frontier ≥60B +0.12'); }
-    if (pm) steps.push(`${fmtB(pm)} params${m.safetensors?.total ? ' (safetensors)' : ''} → score ${score.toFixed(2)}`);
+    if (pm) steps.push(`${fmtB(pm)} params (${size.basis === 'safetensors' ? 'safetensors' : size.basis === 'name' ? 'from the name' : size.basis}) → score ${score.toFixed(2)}`);
+    else steps.push('parameter count unknown — no safetensors, base or size in the name');
     let cls;
     if (/feature-extraction|sentence-similarity|text-ranking|fill-mask/.test(pt)) { steps.push(`pipeline ${pt} → embeddings`); }
     else if (/text-classification|token-classification|translation|summarization|question-answering/.test(pt)) { score += .10; steps.push(`pipeline ${pt} → bounded`); }
@@ -175,7 +203,7 @@
     if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
     else if (unsafe) steps.push('no safetensors → restricted');
     else steps.push('self-attested manifest');
-    return { cls, unsafe, steps, score, flops, agent };
+    return { cls, unsafe, steps, score, flops, agent, basis: size.basis, lineage, paramsB: pm };
   }
   /* VII–X — sourced claims in the evidence register */
   function applyRegister(id, cls, steps) {
@@ -221,6 +249,12 @@
     if (mo.cls <= 5) { const lo = SCORE_EDGES[mo.cls - 1], hi = SCORE_EDGES[mo.cls]; return ((mo.score ?? lo) - lo) / (hi - lo); }
     if (mo.cls === 7 && mo.flops) return Math.log10(mo.flops) - 25;
     return .5;
+  }
+  function classifyAll(models) {
+    const exact = new Map(models.filter(m => m.safetensors?.total).map(m => [m.id.toLowerCase(), m.safetensors.total / 1e9]));
+    for (const r of census) if (r.paramsB && r.basis === 'safetensors') exact.set(r.m.id.toLowerCase(), r.paramsB);
+    const ctx = { paramsOf: id => exact.get(String(id).toLowerCase()) || 0 };
+    return models.map(m => ({ m, ...classifyModel(m, null, ctx), downloads: m.downloads || 0, likes: m.likes || 0 }));
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
@@ -269,29 +303,31 @@
     /* 2 — live pull upgrades the registry when the hub is reachable */
     try {
       const urls = [
-        'https://huggingface.co/api/models?sort=downloads&direction=-1&limit=100&full=false',
-        'https://huggingface.co/api/models?pipeline_tag=text-generation&sort=downloads&direction=-1&limit=100&full=false',
-        'https://huggingface.co/api/models?pipeline_tag=text2text-generation&sort=downloads&direction=-1&limit=60&full=false',
-        'https://huggingface.co/api/models?pipeline_tag=image-text-to-text&sort=downloads&direction=-1&limit=60&full=false',
-        'https://huggingface.co/api/models?pipeline_tag=automatic-speech-recognition&sort=downloads&direction=-1&limit=40&full=false',
-        'https://huggingface.co/api/models?author=meta-llama&sort=downloads&direction=-1&limit=60&full=false',
-        'https://huggingface.co/api/models?author=deepseek-ai&sort=downloads&direction=-1&limit=40&full=false',
-        'https://huggingface.co/api/models?author=mistralai&sort=downloads&direction=-1&limit=40&full=false',
-        'https://huggingface.co/api/models?author=nvidia&sort=downloads&direction=-1&limit=40&full=false',
-      ];
+        'sort=downloads&direction=-1&limit=100',
+        'pipeline_tag=text-generation&sort=downloads&direction=-1&limit=100',
+        'pipeline_tag=text2text-generation&sort=downloads&direction=-1&limit=60',
+        'pipeline_tag=image-text-to-text&sort=downloads&direction=-1&limit=60',
+        'pipeline_tag=automatic-speech-recognition&sort=downloads&direction=-1&limit=40',
+        'author=meta-llama&sort=downloads&direction=-1&limit=60',
+        'author=deepseek-ai&sort=downloads&direction=-1&limit=40',
+        'author=mistralai&sort=downloads&direction=-1&limit=40',
+        'author=nvidia&sort=downloads&direction=-1&limit=40',
+        'author=Qwen&sort=downloads&direction=-1&limit=40',
+        'author=google&sort=downloads&direction=-1&limit=40',
+      ].map(q => `https://huggingface.co/api/models?${q}${HF_FIELDS}`);
       const [lists, or] = await Promise.all([
         Promise.all(urls.map(u => fetch(u).then(r => r.json()))),
         fetch('https://openrouter.ai/api/v1/models').then(r => r.json()).catch(() => null),
       ]);
       const orData = or?.data || [];
       orByHf = new Map(orData.filter(m => m.hugging_face_id).map(m => [m.hugging_face_id.toLowerCase(), m.id]));
-      const seen = new Set(), models = [];
+      const seen = new Set(), raw = [];
       for (const l of lists) for (const m of l) {
         if (!m.id || seen.has(m.id)) continue;
         seen.add(m.id);
-        models.push({ m, ...classifyModel(m), downloads: m.downloads || 0, likes: m.likes || 0 });
+        raw.push(m);
       }
-      models.sort((a, b) => b.downloads - a.downloads);
+      const models = classifyAll(raw).sort((a, b) => b.downloads - a.downloads);
       const apis = orData.filter(isApiOnly).map(apiRec);
       fillRegistry(apis.length ? models.concat(apis) : models.concat(census.filter(r => r.api)));
       $('st-src').textContent = 'LIVE';
@@ -307,7 +343,7 @@
   const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const normId = q => q.trim().replace(/^https?:\/\/(www\.)?huggingface\.co\//i, '').replace(/\/+$/, '').split(/[?#]/)[0];
   const slotOf = id => { const a = AGENTS.find(x => x.used && x.name === id); return a ? a.i : -1; };
-  const toRec = m => ({ m, ...classifyModel(m), downloads: m.downloads || 0 });
+  const toRec = m => classifyAll([m])[0];
 
   let statT = 0;
   function status(txt, kind) {
@@ -344,7 +380,7 @@
     if (known >= 0) { addToMap(census.find(r => r.m.id === id) || { m: { id }, cls: AGENTS[known].cls, unsafe: AGENTS[known].revoked }); finishSearch(); return; }
     status('classifying…', 'busy');
     try {
-      const r = await fetch(`https://huggingface.co/api/models/${id}`);
+      const r = await fetch(`https://huggingface.co/api/models/${id}?${HF_FIELDS.slice(1)}`);
       if (!r.ok) throw new Error(r.status === 404 || r.status === 401 ? 'not found' : `hub ${r.status}`);
       addToMap(toRec(await r.json()));
       finishSearch();
@@ -416,7 +452,7 @@
     render();
     hubT = setTimeout(async () => {
       try {
-        const r = await fetch(`https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=10&sort=downloads&direction=-1`, { signal: sig });
+        const r = await fetch(`https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=10&sort=downloads&direction=-1${HF_FIELDS}`, { signal: sig });
         const have = new Set(results.map(x => x.rec.m.id));
         const hits = (await r.json()).filter(m => m.id && !have.has(m.id)).slice(0, 6).map(m => ({ rec: toRec(m), src: 'hub' }));
         if (q !== lastQ) return;
@@ -566,7 +602,7 @@ void main(){
      red-rimmed = restricted. Size grows with class; rings mark hover/selection. */
   const VS_PTS = `
 attribute vec2 aPos;
-attribute vec4 aDat;   // class 1..10, kind (0 open · 1 API-only · 2 restricted), state (0 · 1 hover · 2 selected), flare 0..1
+attribute vec4 aDat;   // class 1..10, kind (0 open · 1 API-only · 2 restricted · 3 census dust · 4 cluster), state (0 · 1 hover · 2 selected | cluster: member count), flare 0..1
 uniform float Zoom, VX, Dpr, MaxPt, Cls, T;
 uniform vec2 PAN, PTR;
 uniform vec3 Pal[10];
@@ -576,10 +612,14 @@ varying float vDim;
 void main(){
   vec2 uv = (aPos - .5 - PAN - PTR*vec2(.012,.008)) * vec2(Zoom/VX, Zoom) + .5;
   gl_Position = vec4(uv*2.-1., 0., 1.);
-  float cls = aDat.x;
+  float cls = aDat.x, kind = aDat.y;
   float core = (2.6 + min(cls,7.)*.55) * Dpr * clamp(pow(Zoom,.3), .85, 1.5);
-  core *= aDat.z > 1.5 ? 1.3 : aDat.z > .5 ? 1.15 : 1.;
-  core *= 1. + aDat.w*1.6;
+  if (kind > 3.5) core = (4. + sqrt(aDat.z)*1.5) * Dpr;
+  else if (kind > 2.5) core = 1.05 * Dpr;
+  else {
+    core *= aDat.z > 1.5 ? 1.3 : aDat.z > .5 ? 1.15 : 1.;
+    core *= 1. + aDat.w*1.6;
+  }
   gl_PointSize = min(core*6., MaxPt);
   int k = int(cls + .5) - 1;
   vec3 c = vec3(1.);
@@ -598,6 +638,17 @@ void main(){
   float r = length(gl_PointCoord*2.-1.)*6.;   // in core radii (the quad spans 6)
   float kind = vDat.y, st = vDat.z, fl = vDat.w;
   vec3 red = vec3(1.,.25,.3);
+  if (kind > 3.5) {   // cluster: a translucent disc with a bright rim — click to open it
+    float disc = smoothstep(1.,.9,r)*.28, rim = smoothstep(.12,.0,abs(r-.94)), glow = exp(-r*1.4)*.25*(1.-smoothstep(4.,6.,r));
+    float a = clamp(disc + rim*.9 + glow, 0., 1.)*vDim;
+    gl_FragColor = vec4(vCol*(disc + rim + glow)*vDim, a);
+    return;
+  }
+  if (kind > 2.5) {   // census dust: the rest of the registry, faint
+    float a = smoothstep(1.,.3,r)*.42*vDim;
+    gl_FragColor = vec4(vCol*a, a);
+    return;
+  }
   float body = kind > .5 && kind < 1.5
     ? smoothstep(.32,.08,abs(r-.82)) + smoothstep(.5,0.,r)*.25          // API-only: hollow ring
     : smoothstep(1.,.72,r);                                               // open weights: filled disc
@@ -845,6 +896,29 @@ void main(){
     labelsEl.appendChild(d);
     return d;
   });
+  /* lineage lines from the selected star to its base and its derivatives on the map */
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const lineageSvg = document.createElementNS(SVGNS, 'svg');
+  lineageSvg.setAttribute('class', 'lineage');
+  labelsEl.appendChild(lineageSvg);
+  const bubbleLabels = [];
+  function syncBubbleLabels() {
+    while (bubbleLabels.length < bubbles.length) {
+      const s = document.createElement('span');
+      s.className = 'bubble-n';
+      labelsEl.appendChild(s);
+      bubbleLabels.push(s);
+    }
+    bubbleLabels.forEach((s, k) => {
+      const b = bubbles[k];
+      if (!b) { s.style.opacity = 0; return; }
+      const [x, y] = toScreen(b.wx, b.wy);
+      s.textContent = b.n;
+      s.style.color = CLS_HEX[b.cls - 1];
+      s.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`;
+      s.style.opacity = 1;
+    });
+  }
   const rsvCap = document.createElement('span');
   rsvCap.className = 'rsv-cap';
   rsvCap.textContent = 'RESERVED';
@@ -996,7 +1070,7 @@ void main(){
   function pick(sx, sy, radius) {
     let best = radius * radius, hit = -1;
     for (const a of AGENTS) {
-      if (!a.used || (filterCls && a.cls !== filterCls)) continue;
+      if (!a.used || a.hidden || (filterCls && a.cls !== filterCls)) continue;
       const [x, y] = toScreen(a.x, a.y);
       const d = (x - sx) ** 2 + (y - sy) ** 2;
       if (d < best) { best = d; hit = a.i; }
@@ -1025,7 +1099,7 @@ void main(){
     if (e.pointerType === 'mouse') {
       pxx = e.clientX / W - .5; pyy = e.clientY / H - .5;
       hoverIdx = ptrs.size ? -1 : pick(e.clientX, e.clientY, 22);
-      cv.style.cursor = ptrs.size ? 'grabbing' : (hoverIdx >= 0 ? 'pointer' : 'grab');
+      cv.style.cursor = ptrs.size ? 'grabbing' : (hoverIdx >= 0 || pickBubble(e.clientX, e.clientY) ? 'pointer' : 'grab');
     }
     const p = ptrs.get(e.pointerId);
     if (!p) return;
@@ -1050,6 +1124,8 @@ void main(){
     if (!ptrs.delete(e.pointerId)) return;
     if (ptrs.size < 2) pinch = null;
     if (ptrs.size || e.type === 'pointercancel' || movedPx >= 8) return;
+    const b = pickBubble(e.clientX, e.clientY);
+    if (b) { userCam = true; zoomAt(e.clientX, e.clientY, zoomT * 2.4); return; }
     const hit = pick(e.clientX, e.clientY, e.pointerType === 'mouse' ? 22 : 34);
     select(hit, hit >= 0 && mobile);
   };
@@ -1202,9 +1278,10 @@ void main(){
       const am = readme.match(ACTIVE_RE);
       const card = { bench, tokensT: tm ? +tm[1] : 0, activeB: am ? +am[1] : 0 };
       if (tm) a.tokenQuote = readme.slice(Math.max(0, tm.index - 60), tm.index + tm[0].length + 20).replace(/\s+/g, ' ').trim();
-      const rec = { m: { ...mr, id: name }, ...classifyModel({ ...mr, id: name }, card), downloads: a.downloads };
+      const exactOf = id => census.find(r => r.m.id.toLowerCase() === String(id).toLowerCase() && r.basis === 'safetensors')?.paramsB || 0;
+      const rec = { m: { ...mr, id: name }, ...classifyModel({ ...mr, id: name }, card, { paramsOf: exactOf }), downloads: a.downloads };
       const moved = rec.cls !== a.cls;
-      a.steps = rec.steps; a.score = rec.score; a.flops = rec.flops;
+      a.steps = rec.steps; a.score = rec.score; a.flops = rec.flops; a.basis = rec.basis; a.lineage = rec.lineage;
       if (moved) {
         a.cls = rec.cls;
         a.frac = bandFrac(rec);
@@ -1250,6 +1327,8 @@ void main(){
       `<div class="in-row"><span>DOWNLOADS</span><b>${fmtDl(a.downloads)}/mo · ♥${a.likes || 0}</b></div>` +
       `<div class="in-row"><span>LICENSE</span><b>${a.license || '—'}</b></div>` +
       `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
+      `<div class="in-row"><span>SIZE</span><b>${a.paramsB ? fmtB(a.paramsB) + ' params' : '—'} · ${esc(BASIS_LABEL(a.basis))}</b></div>` +
+      lineageRows(a) +
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
       `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
       `<div class="in-sec">CLASSIFICATION EVIDENCE</div>` +
@@ -1437,6 +1516,14 @@ void main(){
     return out;
   }
   const hasWeights = a => !a.api;
+  const BASIS_LABEL = b => !b || b === 'unknown' ? 'unknown' : b === 'safetensors' ? 'exact (safetensors)' : b === 'name' ? 'parsed from the name' : `inherited from ${b.slice(5)}`;
+  const derivativesOf = id => census.filter(r => r.lineage && r.lineage.base.toLowerCase() === id.toLowerCase());
+  function lineageRows(a) {
+    const kids = derivativesOf(a.name);
+    const rels = kids.reduce((o, r) => (o[r.lineage.rel] = (o[r.lineage.rel] || 0) + 1, o), {});
+    return (a.lineage ? `<div class="in-row"><span>LINEAGE</span><b>${esc(a.lineage.rel)} from <button type="button" class="in-jump" data-id="${esc(a.lineage.base)}">${esc(a.lineage.base)}</button></b></div>` : '') +
+      (kids.length ? `<div class="in-row"><span>DERIVATIVES</span><b>${kids.length} in the registry · ${Object.entries(rels).map(([k, v]) => `${v} ${esc(k)}`).join(', ')}</b></div>` : '');
+  }
   function actButtons(a) {
     const r = routes(a), pending = !a.api && a.hfProviders === undefined;
     return (r.length || pending ? `<button type="button" id="in-key"${r.length ? '' : ' disabled'}>⚿ ${r.length ? 'API KEY' : 'CHECKING APIs…'}</button>` : '') +
@@ -1498,6 +1585,12 @@ void main(){
     setTimeout(() => { b.textContent = 'COPY'; }, 1400);
   });
 
+  insp.addEventListener('click', e => {
+    const j = e.target.closest('.in-jump');
+    if (!j) return;
+    const rec = census.find(r => r.m.id.toLowerCase() === j.dataset.id.toLowerCase());
+    if (rec) addToMap(rec); else classifyId(j.dataset.id);
+  });
   insp.addEventListener('click', async e => {
     const b = e.target.closest('.in-copy');
     if (!b) return;
@@ -1587,8 +1680,24 @@ void main(){
       });
     }
   }
+  /* census dust — every ingested model not plotted, on the same axes (rank within the whole census) */
+  let dust = [];
+  function layoutDust() {
+    const plotted = new Set(AGENTS.filter(a => a.used).map(a => a.name));
+    const rest = census.filter(r => !plotted.has(r.m.id));
+    const pct = (arr, key) => { const s = arr.map(key).sort((p, q) => p - q); return v => s.length > 1 ? s.findIndex(x => x >= v) / (s.length - 1) : .5; };
+    const open = rest.filter(r => !r.api && !r.unsafe), bad = rest.filter(r => !r.api && r.unsafe), api = rest.filter(r => r.api);
+    const pO = pct(open, r => r.downloads), pB = pct(bad, r => r.downloads), pA = pct(api, r => r.m.created || 0);
+    dust = rest.map(r => {
+      const h = nameHash(r.m.id), f = .5 * clamp(bandFrac(r), 0, 1) + .5 * h;
+      const y = r.api ? EY + .6 + .1 * pA(r.m.created || 0)
+        : r.unsafe ? EY - .05 - .2 * pB(r.downloads)
+        : EY + .05 + .5 * pO(r.downloads);
+      return { x: bandX(r.cls, f), y: y + (fr(h * 97.3) - .5) * .01, cls: r.cls };
+    });
+  }
   function refresh() {
-    layoutBands(); layoutX(); layoutAdoption(); syncStars(); rebuildRoster();
+    layoutBands(); layoutX(); layoutAdoption(); layoutDust(); syncStars(); rebuildRoster();
     $('st-reg').textContent = registryTotal || AGENTS.filter(a => a.used).length;
     $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
@@ -1691,13 +1800,53 @@ void main(){
     const tmp = fbA; fbA = fbB; fbB = tmp;
   }
 
-  /* pass 4 — the stars: one point per plotted model, rebuilt each frame (192 × 6 floats) */
+  /* pass 4 — the stars, rebuilt each frame: census dust, cluster bubbles, single stars */
   const PAL = new Float32Array(CLASSES.flatMap(k => [1, 3, 5].map(o => parseInt(k.hex.slice(o, o + 2), 16) / 255)));
-  const ptsData = new Float32Array(NODES * 6);
-  function drawPoints(t) {
-    let n = 0;
+  let ptsData = new Float32Array(NODES * 6);
+  /* dense groups collapse into a counted bubble; zooming (or clicking one) opens them */
+  const CLUSTER_PX = 22, CLUSTER_MIN = 5;
+  let bubbles = [];
+  function clusterStars() {
+    for (const a of AGENTS) a.hidden = false;
+    const cells = new Map();
     for (const a of AGENTS) {
-      if (!a.used) continue;
+      if (!a.used || a.i === selIdx || a.i === hoverIdx || (filterCls && a.cls !== filterCls)) continue;
+      const [x, y] = toScreen(a.x, a.y);
+      const k = `${Math.floor(x / CLUSTER_PX)},${Math.floor(y / CLUSTER_PX)}`;
+      (cells.get(k) || cells.set(k, []).get(k)).push(a);
+    }
+    bubbles = [];
+    for (const m of cells.values()) {
+      if (m.length < CLUSTER_MIN) continue;
+      const tally = {};
+      for (const a of m) { a.hidden = true; tally[a.cls] = (tally[a.cls] || 0) + 1; }
+      const cls = +Object.entries(tally).sort((p, q) => q[1] - p[1])[0][0];
+      const wx = m.reduce((v, a) => v + a.x, 0) / m.length, wy = m.reduce((v, a) => v + a.y, 0) / m.length;
+      bubbles.push({ wx, wy, cls, n: m.length });
+    }
+  }
+  function pickBubble(sx, sy) {
+    for (const b of bubbles) {
+      const [x, y] = toScreen(b.wx, b.wy), r = 4 + Math.sqrt(b.n) * 1.5 + 6;
+      if ((x - sx) ** 2 + (y - sy) ** 2 < r * r) return b;
+    }
+    return null;
+  }
+  function drawPoints(t) {
+    clusterStars();
+    const need = (NODES + dust.length + bubbles.length) * 6;
+    if (ptsData.length < need) ptsData = new Float32Array(need);
+    let n = 0;
+    for (const d of dust) {
+      const o = n++ * 6;
+      ptsData[o] = d.x; ptsData[o + 1] = d.y; ptsData[o + 2] = d.cls; ptsData[o + 3] = 3; ptsData[o + 4] = 0; ptsData[o + 5] = 0;
+    }
+    for (const b of bubbles) {
+      const o = n++ * 6;
+      ptsData[o] = b.wx; ptsData[o + 1] = b.wy; ptsData[o + 2] = b.cls; ptsData[o + 3] = 4; ptsData[o + 4] = b.n; ptsData[o + 5] = 0;
+    }
+    for (const a of AGENTS) {
+      if (!a.used || a.hidden) continue;
       const o = n++ * 6;
       ptsData[o] = a.x; ptsData[o + 1] = a.y; ptsData[o + 2] = a.cls;
       ptsData[o + 3] = a.api ? 1 : a.revoked ? 2 : 0;
@@ -1709,6 +1858,7 @@ void main(){
     gl.useProgram(p.p);
     gl.bindBuffer(gl.ARRAY_BUFFER, ptsBuf);
     gl.bufferData(gl.ARRAY_BUFFER, ptsData.subarray(0, n * 6), gl.DYNAMIC_DRAW);
+    syncBubbleLabels();
     const aPos = gl.getAttribLocation(p.p, 'aPos'), aDat = gl.getAttribLocation(p.p, 'aDat');
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 24, 0);
@@ -1733,6 +1883,30 @@ void main(){
   measureHeader();
   addEventListener('resize', () => requestAnimationFrame(measureHeader));
   const order = [];
+  let lineageKey = '';
+  function drawLineage() {
+    const a = selIdx >= 0 ? AGENTS[selIdx] : null;
+    const links = [];
+    if (a && a.used && !a.api) {
+      const id = a.name.toLowerCase();
+      for (const b of AGENTS) {
+        if (!b.used || b === a || b.api) continue;
+        if (a.lineage && b.name.toLowerCase() === a.lineage.base.toLowerCase()) links.push([b, 'up']);
+        else if (b.lineage && b.lineage.base.toLowerCase() === id) links.push([b, 'down']);
+      }
+    }
+    const key = links.length ? `${selIdx}:${links.length}` : '';
+    if (!links.length) { if (lineageKey) { lineageSvg.replaceChildren(); lineageKey = ''; } return; }
+    if (key !== lineageKey) {
+      lineageSvg.replaceChildren(...links.map(([, dir]) => { const l = document.createElementNS(SVGNS, 'line'); l.setAttribute('class', dir); return l; }));
+      lineageKey = key;
+    }
+    const [ax, ay] = toScreen(a.x, a.y);
+    links.forEach(([b], k) => {
+      const [bx, by] = toScreen(b.x, b.y), l = lineageSvg.children[k];
+      l.setAttribute('x1', ax); l.setAttribute('y1', ay); l.setAttribute('x2', bx); l.setAttribute('y2', by);
+    });
+  }
   function placeLabels() {
     for (const s of labels) {
       const c = +s.dataset.c;
@@ -1749,6 +1923,7 @@ void main(){
       planeLine.style.width = Math.max(0, lx1 - lx0) + 'px';
       planeLine.style.opacity = glOK ? 1 : 0;
     }
+    drawLineage();
     /* band edges span the plot only, not the header or the panels' margins */
     const yTop = toScreen(0, EY + .84)[1], yBot = toScreen(0, EY - .32)[1];
     for (const d of bandEdges) {
@@ -1777,7 +1952,7 @@ void main(){
       const a = AGENTS[i], s = nodeLabels[i];
       const hot = i === selIdx || i === hoverIdx;
       let vis = 0;
-      if (a.used && glOK && !(filterCls && a.cls !== filterCls) && (hot || shown < budget)) {
+      if (a.used && glOK && !a.hidden && !(filterCls && a.cls !== filterCls) && (hot || shown < budget)) {
         const [x, y] = toScreen(a.x, a.y);
         const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;
         const onScreen = x > 4 && x < W - 4 && y > headerBottom && y < H - 20;

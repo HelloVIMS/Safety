@@ -85,6 +85,19 @@ the class changes, the star moves to its new band and flares. Click a class
 marker on the sky (or a reserved legend row) for its criteria, register
 entries and members.
 
+**Size and lineage.** Every Hub listing is fetched with the repo's
+safetensors parameter count, its inference-provider mapping and its tags, so
+size is exact for most models at load. A quantized, fine-tuned, adapter or
+merged repo (`base_model:*` tags) without its own count inherits its base
+model's exact size; otherwise the size is parsed from the name, or marked
+unknown. The inspector shows the size *and how it's known*, the lineage
+(click the base to jump to it), and how many derivatives the registry holds;
+selecting a model draws lines to its base and derivatives on the map.
+
+**The whole registry on the sky.** The 192 plotted models are stars; every
+other ingested model (~450) is faint dust in its class band, on the same axes.
+Dense groups collapse into a counted bubble — click it (or zoom) to open it.
+
 The full reasoning is inspectable: every inspector card shows the evidence
 chain (`generative +0.18 → tools +0.09 → 406B params → register: Meta … → CLASS VII`).
 

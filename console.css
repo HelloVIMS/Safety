@@ -411,3 +411,10 @@ button.ro-row:focus-visible,button.lg-row:focus-visible,.cls-mark:focus-visible,
 .plane-line{position:absolute;left:0;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(213,236,226,.75) 4%,rgba(213,236,226,.75) 96%,transparent);
   box-shadow:0 0 8px rgba(63,217,178,.45);pointer-events:none;will-change:transform}
 .rsv-cap{position:absolute;left:0;top:0;font-size:9.5px;letter-spacing:.3em;color:#8a7dff;pointer-events:none;white-space:nowrap;will-change:transform}
+.lineage{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.lineage line{stroke:rgba(213,236,226,.55);stroke-width:1;stroke-dasharray:3 3}
+.lineage line.up{stroke:rgba(63,217,178,.85);stroke-dasharray:none}
+.in-jump{background:none;border:none;padding:0;font:inherit;color:var(--amber);cursor:pointer;text-align:right;word-break:break-all}
+.in-jump:hover{text-decoration:underline}
+.bubble-n{position:absolute;left:0;top:0;font-size:10px;font-weight:700;letter-spacing:.04em;pointer-events:none;
+  text-shadow:0 0 4px #000,0 0 2px #000;font-variant-numeric:tabular-nums;will-change:transform}
