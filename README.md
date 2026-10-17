@@ -132,7 +132,8 @@ attestation.
 | drag a card header | move legend / registry / inspector anywhere |
 | `–` on a card | collapse it · drag the registry's corner to resize |
 | double-click a header | reset that card's position |
-| click a legend class | isolate that spectral band |
+| click a legend class | isolate that band — on the sky and in the registry list |
+| click the **safety.vims** title | the VIMS app selector (Safety is listed there) |
 | `CLASSIFY ▸` search | see below |
 
 **Search.** Typing matches instantly against the whole ingested census

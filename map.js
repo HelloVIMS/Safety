@@ -939,11 +939,33 @@ void main(){
         r.innerHTML = `<span class="st"></span><span class="id">· vacant ·</span><span class="cls">—</span>`;
         return;
       }
-      r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (i === selIdx ? ' sel' : '');
-      const nm = a.source === 'huggingface' ? a.name.split('/').pop() : a.name;
-      r.title = a.name + (a.why ? ' — ' + a.why : '');
-      r.innerHTML = `<span class="st"></span><span class="id">${nm.length > 18 ? nm.slice(0, 17) + '…' : nm}</span><span class="cls" style="color:${CLS_HEX[a.cls - 1]}">${RN[a.cls - 1]}</span>`;
+      r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (a.api ? ' api' : '') + (i === selIdx ? ' sel' : '');
+      const nm = a.name.split('/').pop();
+      r.title = a.name + (a.why ? ' — ' + a.why : '') + (a.api ? ' — API-only' : '');
+      r.innerHTML = `<span class="st"></span><span class="id">${esc(nm.length > 18 ? nm.slice(0, 17) + '…' : nm)}</span>${a.api ? '<span class="api-tag">API</span>' : ''}<span class="cls" style="color:${CLS_HEX[a.cls - 1]}">${RN[a.cls - 1]}</span>`;
     });
+    applyRosterFilter();
+  }
+  /* the registry list follows the class filter, like the sky */
+  const rosterTitle = $('ro-title'), rosterEmpty = document.createElement('div');
+  rosterEmpty.className = 'ro-empty';
+  rosterEl.appendChild(rosterEmpty);
+  function applyRosterFilter() {
+    let shown = 0;
+    AGENTS.forEach((a, i) => {
+      const on = a.used && (!filterCls || a.cls === filterCls);
+      rosterRows[i].hidden = !(on || (!filterCls && !a.used));
+      if (on) shown++;
+    });
+    if (filterCls) {
+      const k = CLASSES[filterCls - 1];
+      rosterTitle.innerHTML = `<b style="color:${k.hex}">CLASS ${k.rn}</b> · ${shown} ON MAP`;
+      rosterEmpty.hidden = shown > 0;
+      rosterEmpty.textContent = k.reserved ? `Class ${k.rn} is reserved — no known entity.` : `No model on the map is class ${k.rn}.`;
+    } else {
+      rosterTitle.textContent = `REGISTRY · ON MAP · ${shown}`;
+      rosterEmpty.hidden = true;
+    }
   }
 
   let selIdx = -1, hoverIdx = -1;
@@ -1471,6 +1493,8 @@ void main(){
     filterCls = filterCls === c ? 0 : c;
     [...$('legend').querySelectorAll('.lg-row')].forEach(r =>
       r.classList.toggle('off', filterCls && +r.dataset.c !== filterCls));
+    applyRosterFilter();
+    if (filterCls && selIdx >= 0 && AGENTS[selIdx].cls !== filterCls) select(-1);
   });
 
   /* registry texture — the sky renders actual node data, not uniform

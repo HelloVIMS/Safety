@@ -356,3 +356,24 @@ html,body{overscroll-behavior:none;height:100%}
   .mo-go{padding:14px 12px}
   .mo-opt{padding:12px}
 }
+
+/* ---------- title: opens the VIMS app selector ---------- */
+button.brand{background:none;border:1px solid transparent;cursor:pointer;font:inherit;font-weight:800;font-size:17px;
+  letter-spacing:.16em;color:var(--bone);padding:5px 10px 5px 6px;margin-left:-6px;border-radius:3px;
+  display:flex;align-items:center;gap:9px;transition:border-color .15s,background .15s}
+button.brand:hover,button.brand:focus-visible{border-color:var(--line);background:rgba(63,217,178,.06);outline:none}
+button.brand .mark{width:22px;height:22px;margin:0}
+button.brand .bt .dim{color:var(--amber);font-weight:500}
+button.brand .caret{font-size:10px;color:var(--dim);transition:transform .15s}
+button.brand:hover .caret{color:var(--amber);transform:translateY(1px)}
+@media (max-width:900px),(pointer:coarse){button.brand{font-size:15px;letter-spacing:.12em}button.brand .mark{width:19px;height:19px}}
+
+/* registry follows the class filter */
+.ro-row[hidden]{display:none}
+.ro-row .api-tag{font-size:7.5px;letter-spacing:.16em;color:var(--dim);border:1px solid var(--line);padding:0 4px;margin-left:auto}
+.ro-row .api-tag + .cls{margin-left:8px}
+.ro-empty{padding:14px;font-size:10px;color:var(--dim);letter-spacing:.06em}
+.ro-empty[hidden]{display:none}
+.ro-row .id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ro-row .cls{margin-left:8px}
+#ro-title b{font-weight:700}

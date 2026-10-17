@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="console.css?v=5">
+  <link rel="stylesheet" href="console.css?v=6">
 </head>
 <body>
 
@@ -20,7 +20,9 @@
 
   <div class="hud">
     <div class="top">
-      <a class="brand" href="/"><img class="mark" src="/vims.png" alt="vims">safety<span class="dim">.vims</span><span class="dim sub">&nbsp;— CLASSIFICATION MAP</span></a>
+      <button type="button" class="brand" id="brand-switch" aria-haspopup="dialog" aria-label="safety.vims — open the VIMS app selector" title="VIMS apps">
+        <img class="mark" src="/vims.png" alt=""><span class="bt">safety<span class="dim">.vims</span></span><span class="caret" aria-hidden="true">▾</span>
+      </button>
       <div class="cx">
         <span class="cx-p">CLASSIFY&nbsp;▸</span>
         <input id="cx-in" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cx-drop"
@@ -45,7 +47,7 @@
     </div>
 
     <div class="roster" data-resize>
-      <div class="ro-h card-h"><span>REGISTRY · ON MAP</span><button class="card-min" aria-label="collapse">–</button></div>
+      <div class="ro-h card-h"><span id="ro-title">REGISTRY · ON MAP</span><button class="card-min" aria-label="collapse">–</button></div>
       <div class="ro-list" id="roster"></div>
     </div>
 
@@ -70,6 +72,27 @@
     </nav>
   </div>
 
-  <script src="map.js?v=5"></script>
+  <script src="map.js?v=6"></script>
+  <script>
+    // The VIMS app selector — the same one every VIMS app opens (web-nav
+    // ServiceSwitcher, bundled by vims.com), loaded on first use.
+    (function () {
+      var btn = document.getElementById('brand-switch'), loading = null;
+      function load() {
+        if (window.VIMSSwitcher) return Promise.resolve();
+        return loading || (loading = new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = 'https://vims.com/vims-switcher.js';
+          s.onload = resolve;
+          s.onerror = function () { loading = null; reject(new Error('switcher unavailable')); };
+          document.head.appendChild(s);
+        }));
+      }
+      btn.addEventListener('pointerenter', function () { load().catch(function () {}); }, { once: true });
+      btn.addEventListener('click', function () {
+        load().then(function () { window.VIMSSwitcher.open('safety'); }).catch(function () { window.location.href = 'https://vims.com'; });
+      });
+    })();
+  </script>
 </body>
 </html>
