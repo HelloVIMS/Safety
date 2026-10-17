@@ -94,6 +94,30 @@ unknown. The inspector shows the size *and how it's known*, the lineage
 (click the base to jump to it), and how many derivatives the registry holds;
 selecting a model draws lines to its base and derivatives on the map.
 
+**Phases — where a model sits in its family.** Read from each repo's own
+tags and name, in priority order:
+
+| Phase | Evidence |
+|---|---|
+| ANTI-CERTIFIED | `abliterated`, `uncensored`, `heretic`, `obliterated`, "refusals removed", `unaligned`, `unfiltered`, `jailbreak` in a tag or the name |
+| DISTILLED | `distillation` tag or `distil` in the name (teacher parsed from `<teacher>-Distill-…`) |
+| MERGE | `base_model:merge`, `merge` / `mergekit` tags |
+| ADAPTER | `base_model:adapter`, LoRA / PEFT tags |
+| QUANTIZED | `base_model:quantized` |
+| OFFICIAL DERIVATIVE | `base_model` from the same org |
+| COMMUNITY FINE-TUNE | `base_model` from a different org |
+| ORIGINAL | no `base_model` tag (all API-only models) |
+
+**Anti-certified models sit below the certification plane whatever their
+class** — the repo itself declares its safety training removed — drawn as a red
+✕, with the triggering tag or name in the evidence. Derivatives draw as a disc
+with a dark core. Each phase is a **layer** in the legend (on map / in
+registry counts), toggled on and off; layers compose with the class filter,
+the time axis and the registry list, and persist as `?hide=`. The community
+layers rank low by downloads, so the registry pulls dedicated cohorts
+(abliterated, uncensored, heretic, distill, merge, LoRA) and the map reserves
+slots for each layer.
+
 **Axes.** `x` is the class band. `y` is chosen in the view bar (and kept in
 the URL as `?y=`): **ADOPTION** — open weights by download rank, API-only
 models (no download counts) in a strip by release date; **RELEASED** — every

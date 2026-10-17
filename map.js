@@ -95,7 +95,8 @@
     a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
     a.source = 'huggingface'; a.steps = mo.steps; a.gated = mo.m.gated || false; a.files = undefined;
     a.license = a.api ? 'proprietary — provider API terms' : (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
-    a.why = mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
+    a.phase = mo.phase || 'original'; a.phaseWhy = mo.phaseWhy || ''; a.teacher = mo.teacher || null;
+    a.why = a.phase === 'anti' ? 'anti-certified — safety training removed' : mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
     a.hash = '';
     const name = a.name;
     manifestHash(mo.m).then(h => {
@@ -139,6 +140,39 @@
     return base ? { base, rel } : null;
   }
 
+  /* ============ PHASES — where a model sits in its family ============
+     Read from the repo's own tags and name, in priority order. Anti-certified
+     (safety training deliberately removed) sits below the certification plane
+     whatever its class: its own manifest declares the safeguards gone. */
+  const PHASES = [
+    { id: 'original', label: 'ORIGINAL', short: 'ORIGINAL', note: 'released by whoever trained it' },
+    { id: 'official', label: 'OFFICIAL DERIVATIVE', short: 'OFFICIAL', note: "derived by the base model's own org" },
+    { id: 'community', label: 'COMMUNITY FINE-TUNE', short: 'COMMUNITY', note: "fine-tuned by someone other than the base's org" },
+    { id: 'quantized', label: 'QUANTIZED', short: 'QUANTIZED', note: 'the same weights, compressed' },
+    { id: 'distilled', label: 'DISTILLED', short: 'DISTILLED', note: "a teacher's behaviour trained into a smaller student" },
+    { id: 'merge', label: 'MERGE', short: 'MERGE', note: 'several models blended' },
+    { id: 'adapter', label: 'ADAPTER', short: 'ADAPTER', note: 'a LoRA / PEFT patch on a base' },
+    { id: 'anti', label: 'ANTI-CERTIFIED', short: 'ANTI-CERT', note: 'safety training removed — abliterated, uncensored, heretic…' },
+  ];
+  const PHASE = Object.fromEntries(PHASES.map(p => [p.id, p]));
+  const ANTI_RE = /abliterat|uncensor|heretic|obliterat|refusal[-_ ]?(?:remov|free|less)|no[-_]?refusals?\b|unaligned|unfiltered|jailbr[eo]/i;
+  function phaseOf(m, id) {
+    const tags = m.tags || [], lin = lineageOf(tags), owner = id.split('/')[0];
+    const antiTag = tags.find(t => ANTI_RE.test(t)), antiName = ANTI_RE.exec(id);
+    if (antiTag || antiName) return { phase: 'anti', why: antiTag ? `tag "${antiTag}"` : `"${antiName[0]}" in the name` };
+    if (tags.includes('distillation') || /distil/.test(id)) {
+      const t = /\/([a-z0-9.]+(?:-[a-z0-9.]+)*?)-distill/.exec(id);
+      return { phase: 'distilled', why: tags.includes('distillation') ? 'tag "distillation"' : '"distil" in the name', teacher: t ? t[1] : null };
+    }
+    if (lin?.rel === 'merge' || tags.includes('merge') || tags.includes('mergekit')) return { phase: 'merge', why: lin?.rel === 'merge' ? 'base_model:merge' : 'tag "merge"' };
+    if (lin?.rel === 'adapter' || tags.includes('lora') || tags.includes('peft')) return { phase: 'adapter', why: lin?.rel === 'adapter' ? 'base_model:adapter' : 'LoRA / PEFT tag' };
+    if (lin?.rel === 'quantized') return { phase: 'quantized', why: 'base_model:quantized' };
+    if (lin) return lin.base.split('/')[0].toLowerCase() === owner
+      ? { phase: 'official', why: `base ${lin.base} — same org` }
+      : { phase: 'community', why: `base ${lin.base} — by ${owner}` };
+    return { phase: 'original', why: 'no base_model tag' };
+  }
+
   /* size and how we know it: the repo's own safetensors count, its base
      model's (quantized / fine-tuned repos), the name, or nothing */
   function sizeOf(m, id, ctx) {
@@ -153,7 +187,7 @@
     const id = (m.id || '').toLowerCase();
     const tags = m.tags || [], pt = m.pipeline_tag || '';
     const size = sizeOf(m, id, ctx), pm = size.b;
-    const lineage = lineageOf(tags);
+    const lineage = lineageOf(tags), phase = phaseOf(m, id);
     const gen = /^(text-generation|text2text-generation|image-text-to-text|any-to-any|text-to-image|text-to-video|text-to-speech)$/.test(pt) || tags.includes('text-generation');
     const tools = /instruct|chat|tool|function|agent/.test(id) || tags.some(t => /tool|function.?call/i.test(t));
     const mm = /image-text|vision|vl-|multimodal|omni/.test(pt + ' ' + id) || tags.includes('image-text-to-text');
@@ -200,11 +234,14 @@
       }
     }
     cls = applyRegister(id, cls, steps);
-    const unsafe = !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
-    if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
+    steps.push(`phase: ${PHASE[phase.phase].label.toLowerCase()} — ${phase.why}`);
+    const anti = phase.phase === 'anti';
+    const unsafe = anti || !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
+    if (anti) steps.push('safety training removed → ANTI-CERTIFIED (below the plane)');
+    else if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
     else if (unsafe) steps.push('no safetensors → restricted');
     else steps.push('self-attested manifest');
-    return { cls, unsafe, steps, score, flops, agent, basis: size.basis, lineage, paramsB: pm };
+    return { cls, unsafe, steps, score, flops, agent, basis: size.basis, lineage, paramsB: pm, phase: phase.phase, phaseWhy: phase.why, teacher: phase.teacher || null };
   }
   /* VII–X — sourced claims in the evidence register */
   function applyRegister(id, cls, steps) {
@@ -238,7 +275,7 @@
     let cls = score < .15 ? 1 : score < .35 ? 2 : score < .58 ? 3 : score < .78 ? 4 : 5;
     steps.push(`score ${score.toFixed(2)} → CLASS ${RN[cls - 1]}`);
     cls = applyRegister(id, cls, steps);
-    return { cls, unsafe: false, steps, score, flops: 0, api: true };
+    return { cls, unsafe: false, steps, score, flops: 0, api: true, phase: 'original', phaseWhy: 'closed model from the lab' };
   }
   const apiRec = m => ({ m: { ...m, api: true }, ...classifyApiModel(m), downloads: 0, api: true });
   /* OpenRouter lists every model it routes; the ones with no Hugging Face id are API-only */
@@ -279,11 +316,17 @@
     const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
     const byCls = c => ok.filter(mo => mo.cls === c);
     let i = 0;
-    for (let c = 1; c <= NCLS && i < 48; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 48) break; placeModel(mo, i++); }
-    /* backfill to the node ceiling — every fetched model registers regardless */
+    for (let c = 1; c <= NCLS && i < 40; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 40) break; placeModel(mo, i++); }
+    /* every phase layer gets representatives — the community layers rank low by downloads */
     const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
-    for (const mo of ok) { if (i >= 124) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
-    for (const mo of bad.slice(0, 4)) { if (i >= NODES - API_SLOTS) break; placeModel(mo, i++); }
+    for (const [ph, k] of [['anti', 14], ['distilled', 8], ['merge', 6], ['adapter', 4], ['community', 8], ['quantized', 8]]) {
+      for (const mo of recs.filter(r => r.phase === ph && !seen.has(r.m.id)).slice(0, k)) {
+        if (i >= NODES - API_SLOTS - 4) break;
+        placeModel(mo, i++); seen.add(mo.m.id);
+      }
+    }
+    for (const mo of ok) { if (i >= NODES - API_SLOTS - 4) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
+    for (const mo of bad.filter(r => r.phase !== 'anti' && !seen.has(r.m.id)).slice(0, 4)) { if (i >= NODES - API_SLOTS) break; placeModel(mo, i++); }
     refresh();
     fitView();
     syncTimeline(); syncYAxis();
@@ -318,6 +361,12 @@
         'author=nvidia&sort=downloads&direction=-1&limit=40',
         'author=Qwen&sort=downloads&direction=-1&limit=40',
         'author=google&sort=downloads&direction=-1&limit=40',
+        'search=abliterated&sort=downloads&direction=-1&limit=40',
+        'search=uncensored&sort=downloads&direction=-1&limit=40',
+        'search=heretic&sort=downloads&direction=-1&limit=20',
+        'search=distill&sort=downloads&direction=-1&limit=40',
+        'filter=merge&sort=downloads&direction=-1&limit=30',
+        'filter=lora&sort=downloads&direction=-1&limit=20',
       ].map(q => `https://huggingface.co/api/models?${q}${HF_FIELDS}`);
       const [lists, or] = await Promise.all([
         Promise.all(urls.map(u => fetch(u).then(r => r.json()))),
@@ -606,7 +655,7 @@ void main(){
      red-rimmed = restricted. Size grows with class; rings mark hover/selection. */
   const VS_PTS = `
 attribute vec2 aPos;
-attribute vec4 aDat;   // class 1..10, kind (0 open · 1 API-only · 2 restricted · 3 census dust · 4 cluster), state (0 · 1 hover · 2 selected | cluster: member count), flare 0..1
+attribute vec4 aDat;   // class 1..10, kind (0 open original · 1 API-only · 2 restricted · 3 census dust · 4 cluster · 5 anti-certified · 6 open derivative), state (0 · 1 hover · 2 selected | cluster: member count), flare 0..1
 uniform float Zoom, VX, Dpr, MaxPt, Cls, T;
 uniform vec2 PAN, PTR;
 uniform vec3 Pal[10];
@@ -621,6 +670,7 @@ void main(){
   if (kind > 3.5) core = (4. + sqrt(aDat.z)*1.5) * Dpr;
   else if (kind > 2.5) core = 1.05 * Dpr;
   else {
+    if (kind > 5.5) core *= .85;
     core *= aDat.z > 1.5 ? 1.3 : aDat.z > .5 ? 1.15 : 1.;
     core *= 1. + aDat.w*1.6;
   }
@@ -653,15 +703,22 @@ void main(){
     gl_FragColor = vec4(vCol*a, a);
     return;
   }
+  vec2 q = (gl_PointCoord*2.-1.)*6.;
   float body = kind > .5 && kind < 1.5
     ? smoothstep(.32,.08,abs(r-.82)) + smoothstep(.5,0.,r)*.25          // API-only: hollow ring
-    : smoothstep(1.,.72,r);                                               // open weights: filled disc
-  float rim = kind > 1.5 ? smoothstep(.22,.05,abs(r-1.3)) : 0.;          // restricted: red rim
+    : kind > 5.5
+    ? smoothstep(1.,.72,r) - smoothstep(.5,.3,r)*.8                       // derivative: a disc with a dark core
+    : smoothstep(1.,.72,r);                                               // original open weights: filled disc
+  float rim = kind > 1.5 && kind < 2.5 ? smoothstep(.22,.05,abs(r-1.3)) : 0.;   // restricted: red rim
+  float cross = kind > 4.5 && kind < 5.5                                          // anti-certified: a red ✕
+    ? (smoothstep(.34,.1,abs(q.x-q.y)) + smoothstep(.34,.1,abs(q.x+q.y)))*step(r,1.9) : 0.;
+  rim += cross;
   float halo = exp(-r*1.15)*.5*(1.-smoothstep(4.,6.,r));
   float hov = st > .5 && st < 1.5 ? smoothstep(.2,.05,abs(r-2.2))*.7 : 0.;
   float sel = st > 1.5 ? smoothstep(.22,.06,abs(r-2.6))*(.7+.3*sin(T*5.)) + smoothstep(.16,.04,abs(r-3.5))*.35 : 0.;
   float flare = fl > 0. ? smoothstep(.3,.0,abs(r-(1.-fl)*5.5))*fl : 0.;
-  vec3 c = kind > 1.5 ? mix(vCol, red, .35) : vCol;
+  vec3 c = kind > 1.5 && kind < 2.5 ? mix(vCol, red, .35) : kind > 4.5 && kind < 5.5 ? mix(vCol, red, .55) : vCol;
+  if (kind > 4.5 && kind < 5.5) body *= .45;
   vec3 col = c*(body + halo) + red*rim + vec3(1.)*(hov + sel)*.9 + c*flare;
   float a = clamp(body + halo*.85 + rim + hov + sel + flare, 0., 1.) * vDim;
   gl_FragColor = vec4(col*vDim, a);
@@ -982,7 +1039,7 @@ void main(){
         r.innerHTML = `<span class="st"></span><span class="id">· vacant ·</span><span class="cls">—</span>`;
         return;
       }
-      r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (a.api ? ' api' : '') + (i === selIdx ? ' sel' : '');
+      r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (a.phase === 'anti' ? ' anti' : '') + (a.api ? ' api' : '') + (i === selIdx ? ' sel' : '');
       const nm = a.name.split('/').pop();
       r.title = a.name + (a.why ? ' — ' + a.why : '') + (a.api ? ' — API-only' : '');
       r.innerHTML = `<span class="st"></span><span class="id">${esc(nm.length > 18 ? nm.slice(0, 17) + '…' : nm)}</span>${a.api ? '<span class="api-tag">API</span>' : ''}<span class="cls" style="color:${CLS_HEX[a.cls - 1]}">${RN[a.cls - 1]}</span>`;
@@ -996,7 +1053,7 @@ void main(){
   function applyRosterFilter() {
     let shown = 0;
     AGENTS.forEach((a, i) => {
-      const on = a.used && !a.future && (!filterCls || a.cls === filterCls);
+      const on = a.used && !a.future && inLayers(a) && (!filterCls || a.cls === filterCls);
       rosterRows[i].hidden = !(on || (!filterCls && !a.used));
       if (on) shown++;
     });
@@ -1081,7 +1138,7 @@ void main(){
   function pick(sx, sy, radius) {
     let best = radius * radius, hit = -1;
     for (const a of AGENTS) {
-      if (!a.used || a.hidden || a.future || (filterCls && a.cls !== filterCls)) continue;
+      if (!a.used || a.hidden || a.future || !inLayers(a) || (filterCls && a.cls !== filterCls)) continue;
       const [x, y] = toScreen(a.x, a.y);
       const d = (x - sx) ** 2 + (y - sy) ** 2;
       if (d < best) { best = d; hit = a.i; }
@@ -1292,7 +1349,7 @@ void main(){
       const exactOf = id => census.find(r => r.m.id.toLowerCase() === String(id).toLowerCase() && r.basis === 'safetensors')?.paramsB || 0;
       const rec = { m: { ...mr, id: name }, ...classifyModel({ ...mr, id: name }, card, { paramsOf: exactOf }), downloads: a.downloads };
       const moved = rec.cls !== a.cls;
-      a.steps = rec.steps; a.score = rec.score; a.flops = rec.flops; a.basis = rec.basis; a.lineage = rec.lineage;
+      a.steps = rec.steps; a.score = rec.score; a.flops = rec.flops; a.basis = rec.basis; a.lineage = rec.lineage; a.phase = rec.phase; a.phaseWhy = rec.phaseWhy;
       if (moved) {
         a.cls = rec.cls;
         a.frac = bandFrac(rec);
@@ -1339,6 +1396,7 @@ void main(){
       `<div class="in-row"><span>LICENSE</span><b>${a.license || '—'}</b></div>` +
       `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
       `<div class="in-row"><span>SIZE</span><b>${a.paramsB ? fmtB(a.paramsB) + ' params' : '—'} · ${esc(BASIS_LABEL(a.basis))}</b></div>` +
+      `<div class="in-row"><span>PHASE</span><b class="${a.phase === 'anti' ? 'bad' : ''}">${esc(PHASE[a.phase || 'original'].label)} · ${esc(a.phaseWhy || '')}${a.teacher ? ` · teacher ${esc(a.teacher)}` : ''}</b></div>` +
       lineageRows(a) +
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
       `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
@@ -1613,8 +1671,31 @@ void main(){
 
   /* legend class filter */
   let filterCls = 0;
+  /* phase layers shown on the sky (?hide=quantized,merge…) */
+  const hiddenPhases = new Set((new URLSearchParams(location.search).get('hide') || '').split(',').filter(p => PHASE[p]));
+  const inLayers = a => !hiddenPhases.has(a.phase || 'original');
   $('lg-rows').innerHTML = CLASSES.map((k, i) =>
     `<button type="button" class="lg-row${k.reserved ? ' rsv' : ''}" data-c="${i + 1}" aria-pressed="false"><i style="--c:${k.hex}"></i>${k.rn} · ${k.name}<span class="n"></span></button>`).join('');
+  $('lg-layers').innerHTML = PHASES.map(p =>
+    `<button type="button" class="ly-row${p.id === 'anti' ? ' anti' : ''}" data-ph="${p.id}" aria-pressed="${!hiddenPhases.has(p.id)}" title="${esc(p.label.toLowerCase())} — ${esc(p.note)}"><i></i>${p.short}<span class="n"></span></button>`).join('');
+  $('lg-layers').addEventListener('click', e => {
+    const b = e.target.closest('.ly-row');
+    if (!b) return;
+    const ph = b.dataset.ph;
+    if (hiddenPhases.has(ph)) hiddenPhases.delete(ph); else hiddenPhases.add(ph);
+    b.setAttribute('aria-pressed', String(!hiddenPhases.has(ph)));
+    applyRosterFilter(); syncUrl(); syncStars();
+    if (selIdx >= 0 && !inLayers(AGENTS[selIdx])) select(-1);
+  });
+  function syncLayerCounts() {
+    const onMap = {}, all = {};
+    for (const a of AGENTS) if (a.used) onMap[a.phase || 'original'] = (onMap[a.phase || 'original'] || 0) + 1;
+    for (const r of census) all[r.phase || 'original'] = (all[r.phase || 'original'] || 0) + 1;
+    document.querySelectorAll('#lg-layers .ly-row').forEach(b => {
+      const p = b.dataset.ph;
+      b.querySelector('.n').textContent = `${onMap[p] || 0} / ${all[p] || 0}`;
+    });
+  }
   $('legend').addEventListener('click', e => {
     const row = e.target.closest('.lg-row');
     if (!row) return;
@@ -1708,6 +1789,7 @@ void main(){
     const u = new URL(location.href);
     if (yAxis !== 'adoption') u.searchParams.set('y', yAxis); else u.searchParams.delete('y');
     if (asOf) u.searchParams.set('asof', fmtMonth(asOf)); else u.searchParams.delete('asof');
+    if (hiddenPhases.size) u.searchParams.set('hide', [...hiddenPhases].join(',')); else u.searchParams.delete('hide');
     history.replaceState(null, '', u);
   }
 
@@ -1728,7 +1810,7 @@ void main(){
       nodeData[o + 2] = y16 >> 8; nodeData[o + 3] = y16 & 255;
       nodeData[o + 4] = Math.round((a.cls || 1) * 25);
       nodeData[o + 5] = a.used && a.revoked ? 255 : 0;
-      nodeData[o + 6] = a.used && !a.future ? 0 : 255;   // not yet published = absent
+      nodeData[o + 6] = a.used && !a.future && inLayers(a) ? 0 : 255;   // unpublished or layer hidden = absent
       nodeData[o + 7] = 0;
     });
     uploadNodes();
@@ -1798,7 +1880,7 @@ void main(){
     const ys = yLayout(rest.map(r => ({ api: !!r.api, bad: !!r.unsafe, dl: r.downloads, date: recDate(r), size: r.paramsB || 0, seed: nameHash(r.m.id) * 997 })));
     dust = rest.map((r, k) => {
       const h = nameHash(r.m.id), f = .5 * clamp(bandFrac(r), 0, 1) + .5 * h;
-      return { x: bandX(r.cls, f), y: ys[k], cls: r.cls, date: recDate(r) };
+      return { x: bandX(r.cls, f), y: ys[k], cls: r.cls, date: recDate(r), phase: r.phase || 'original' };
     });
   }
   function refresh() {
@@ -1806,6 +1888,7 @@ void main(){
     $('st-reg').textContent = registryTotal || AGENTS.filter(a => a.used).length;
     $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
+    syncLayerCounts();
     document.querySelectorAll('#legend .lg-row .n').forEach(n => {
       const c = +n.closest('.lg-row').dataset.c;
       const k = AGENTS.filter(a => a.used && a.cls === c).length;
@@ -1918,7 +2001,7 @@ void main(){
     applyAsOf();
     const cells = new Map();
     for (const a of AGENTS) {
-      if (!a.used || a.future || a.i === selIdx || a.i === hoverIdx || (filterCls && a.cls !== filterCls)) continue;
+      if (!a.used || a.future || !inLayers(a) || a.i === selIdx || a.i === hoverIdx || (filterCls && a.cls !== filterCls)) continue;
       const [x, y] = toScreen(a.x, a.y);
       const k = `${Math.floor(x / CLUSTER_PX)},${Math.floor(y / CLUSTER_PX)}`;
       (cells.get(k) || cells.set(k, []).get(k)).push(a);
@@ -1946,7 +2029,7 @@ void main(){
     if (ptsData.length < need) ptsData = new Float32Array(need);
     let n = 0;
     for (const d of dust) {
-      if (asOf && d.date > asOf) continue;
+      if ((asOf && d.date > asOf) || hiddenPhases.has(d.phase)) continue;
       const o = n++ * 6;
       ptsData[o] = d.x; ptsData[o + 1] = d.y; ptsData[o + 2] = d.cls; ptsData[o + 3] = 3; ptsData[o + 4] = 0; ptsData[o + 5] = 0;
     }
@@ -1955,10 +2038,10 @@ void main(){
       ptsData[o] = b.wx; ptsData[o + 1] = b.wy; ptsData[o + 2] = b.cls; ptsData[o + 3] = 4; ptsData[o + 4] = b.n; ptsData[o + 5] = 0;
     }
     for (const a of AGENTS) {
-      if (!a.used || a.hidden || a.future) continue;
+      if (!a.used || a.hidden || a.future || !inLayers(a)) continue;
       const o = n++ * 6;
       ptsData[o] = a.x; ptsData[o + 1] = a.y; ptsData[o + 2] = a.cls;
-      ptsData[o + 3] = a.api ? 1 : a.revoked ? 2 : 0;
+      ptsData[o + 3] = a.api ? 1 : a.phase === 'anti' ? 5 : a.revoked ? 2 : a.phase === 'original' ? 0 : 6;
       ptsData[o + 4] = a.i === selIdx ? 2 : a.i === hoverIdx ? 1 : 0;
       ptsData[o + 5] = reducedMotion ? 0 : a.i === birthIdx && birthT < 2.5 ? 1 - birthT / 2.5 : a.bornT != null && clock - a.bornT < 1.6 ? 1 - (clock - a.bornT) / 1.6 : 0;
     }
@@ -2056,12 +2139,12 @@ void main(){
     for (let i = 0; i < AGENTS.length; i++) if (i !== selIdx && i !== hoverIdx) order.push(i);
     rects.length = 0;
     const budget = mobile ? (zoom > 1.6 ? 40 : zoom > 1.2 ? 16 : 8) : (zoom > 1.4 ? NODES : zoom > 1.05 ? 56 : 28);
-    let shown = 0;
+    let nLabels = 0;
     for (const i of order) {
       const a = AGENTS[i], s = nodeLabels[i];
       const hot = i === selIdx || i === hoverIdx;
       let vis = 0;
-      if (a.used && glOK && !a.hidden && !a.future && !(filterCls && a.cls !== filterCls) && (hot || shown < budget)) {
+      if (a.used && glOK && !a.hidden && !a.future && inLayers(a) && !(filterCls && a.cls !== filterCls) && (hot || nLabels < budget)) {
         const [x, y] = toScreen(a.x, a.y);
         const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;
         const onScreen = x > 4 && x < W - 4 && y > headerBottom && y < H - 20;
@@ -2069,7 +2152,7 @@ void main(){
           const cx = clamp(x, w / 2 + 2, W - w / 2 - 2);
           rects.push([cx - w / 2, tp, cx + w / 2, tp + LB_H]);
           s.style.transform = `translate(${cx}px,${y}px) translate(-50%,8px)`;
-          vis = hot ? 1 : .62; shown++;
+          vis = hot ? 1 : .62; nLabels++;
         }
       }
       s.style.color = hot ? CLS_HEX[a.cls - 1] : 'var(--dim)';
