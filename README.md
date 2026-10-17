@@ -35,8 +35,12 @@ deterministically from its model-card metadata:
 | multimodal | `+0.10` | `pipeline_tag`, tags |
 | reasoning | `+0.10` | `r1`/`o1`/`thinking` in id |
 
-The score places the star on the main-sequence diagonal — **position is the
-classification**. Spectral bands map score to risk class:
+The sky is an H–R diagram over the registry:
+
+- **x = capability score** — **horizontal position is the classification**;
+  spectral bands along it map score to risk class.
+- **y = adoption** — rank by monthly downloads among plotted models. Attested
+  models rise above the certification plane; restricted models mirror below it.
 
 | class | score | color | meaning |
 |---|---|---|---|
@@ -81,14 +85,21 @@ attestation.
 
 | input | action |
 |---|---|
-| drag | pan the sky |
-| scroll | zoom (0.5×–2.6×) |
-| click a star | open the inspector |
-| click a roster row | same |
+| drag (mouse or one finger) | pan the sky |
+| scroll / pinch | zoom about the cursor or pinch midpoint (0.5×–4×) |
+| click / tap a star | open the inspector; touch uses a larger hit radius |
+| click a roster row | open + fly the camera to the star |
 | `/` | focus the classify bar |
 | `Esc` | dismiss inspector / blur |
 | click a legend class | isolate that spectral band |
 | `CLASSIFY ▸ owner/model` | fetch + classify any hub model, live |
+
+**Mobile:** the header collapses to brand / classify / stats; `REGISTRY` and
+`CLASSES` in the bottom bar open the roster and legend as sheets, and the
+inspector opens as a bottom sheet with the selected star framed above it.
+Portrait screens show a slice of the capability axis at zoom 1 — pan for the
+rest. Labels are collision-culled in priority order (selected → hovered →
+download rank), so dense regions only label what fits.
 
 The inspector shows status, pipeline, downloads, license, manifest hash,
 the score, the full evidence chain, and **self-reported benchmarks** parsed
@@ -99,7 +110,7 @@ from `cardData.model-index` (labeled as such — no independent eval runs here).
 | stage | source | notes |
 |---|---|---|
 | snapshot | `catalog.json` (bundled) | 22 real model cards, loads instantly |
-| live | `huggingface.co/api/models` | top-downloaded + top generative + gated cohorts; no auth, CORS-open |
+| live | `huggingface.co/api/models` | 9 cohorts — top downloads, text/text2text/image-text/ASR pipelines, meta-llama, deepseek-ai, mistralai, nvidia; deduped (~400 models); top 128 plotted; no auth, CORS-open |
 | classify | `huggingface.co/api/models/{id}` | on-demand per model |
 | benchmarks | `?full=true` → `cardData` | lazy, on inspect |
 
@@ -114,12 +125,16 @@ Vanilla JS + WebGL. No build step, no dependencies, no backend.
 Three passes per frame:
 
 1. **`FS_SCENE`** — the sky at terminal-cell resolution: `r` luminance,
-   `g` threat, `b` class hue. The registry is fed as uniform arrays
-   (`APos`, `ACls`, `ARev`, `AVac`, `Edge`) — the shader renders the data,
-   not a formula.
+   `g` threat, `b` class hue. The registry is uploaded as a 512×1 RGBA8
+   texture (16-bit position + class/restricted/vacant flags per node, edge
+   index pairs) — no uniform-vector ceiling, works on every WebGL1 driver.
 2. **`FS_STAMP`** — one glyph per cell from a density-ramp atlas,
    max-blended into a phosphor persistence buffer.
 3. **`FS_DISPLAY`** — CRT post: chroma split, scanlines, band tearing.
+
+GL resources are rebuilt on `webglcontextrestored`, render targets are freed
+and reallocated only when the backing size changes, and if WebGL is
+unavailable the registry, inspector and classify bar still work as a list.
 
 ## Run / deploy
 

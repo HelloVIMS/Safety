@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="console.css?v=1">
+  <link rel="stylesheet" href="console.css?v=2">
 </head>
 <body>
 
@@ -20,10 +20,10 @@
 
   <div class="hud">
     <div class="top">
-      <a class="brand" href="/"><img class="mark" src="/vims.png" alt="vims">safety<span class="dim">.vims — CLASSIFICATION MAP</span></a>
+      <a class="brand" href="/"><img class="mark" src="/vims.png" alt="vims">safety<span class="dim">.vims</span><span class="dim sub">&nbsp;— CLASSIFICATION MAP</span></a>
       <div class="cx">
         <span class="cx-p">CLASSIFY&nbsp;▸</span>
-        <input id="cx-in" list="cx-list" placeholder="classify a model — owner/name" autocomplete="off" spellcheck="false">
+        <input id="cx-in" list="cx-list" placeholder="classify a model — owner/name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" inputmode="url">
         <datalist id="cx-list"></datalist>
       </div>
       <div class="stats">
@@ -41,7 +41,7 @@
       <div class="lg-row" data-c="3"><i style="--c:#fffae6"></i>III · STATEFUL<span class="n">×3</span></div>
       <div class="lg-row" data-c="4"><i style="--c:#ffb359"></i>IV · SIDE-EFFECTING<span class="n">×3</span></div>
       <div class="lg-row" data-c="5"><i style="--c:#ff6b2e"></i>V · PRIVILEGED<span class="n">×3</span></div>
-      <div class="lg-note">CLASSIFICATION IS A PURE FUNCTION<br>OF THE CAPABILITY MANIFEST.<br>CLICK A CLASS TO ISOLATE.</div>
+      <div class="lg-note">CLASSIFICATION IS A PURE FUNCTION<br>OF THE CAPABILITY MANIFEST.<br>SELECT A CLASS TO ISOLATE.</div>
     </div>
 
     <div class="roster">
@@ -55,8 +55,14 @@
     </div>
 
     <div class="hint">DRAG TO PAN · SCROLL TO ZOOM<br>CLICK A STAR TO INSPECT</div>
+
+    <nav class="mbar">
+      <button data-sheet="roster">REGISTRY</button>
+      <button data-sheet="legend">CLASSES</button>
+      <span class="m-hint">PINCH · DRAG · TAP</span>
+    </nav>
   </div>
 
-  <script src="map.js?v=1"></script>
+  <script src="map.js?v=2"></script>
 </body>
 </html>

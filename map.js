@@ -1,14 +1,10 @@
-/* 4C.CC — THE CLASSIFICATION MAP
-   The registry as a live console: the whole certification sky, on.
-   Hover a star to inspect its license. Click a class to isolate it.
-   The sweep re-fires periodically — the registry re-classifies itself.
+/* safety.vims — THE CLASSIFICATION MAP
+   Released models, classified from their manifests, plotted on the
+   certification sky. Tap/click a star to inspect. Drag/pinch to traverse.
 
    PASS 1 · SCENE — certification sky at cell res (r=lum g=threat b=class hue)
    PASS 2 · STAMP — glyph per cell, phosphor persistence
-   PASS 3 · DISPLAY — CRT post
-
-   Verdict feed runs the real TOOL_RISK table + policy ordering ported
-   from github.com/hellovims/4c. */
+   PASS 3 · DISPLAY — CRT post */
 (() => {
   'use strict';
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -51,13 +47,10 @@
   function placeModel(mo, i) {
     const a = AGENTS[i];
     a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe; a.score = mo.score;
-    /* continuous spectral position — class bands lie along it */
+    /* x = capability score — class bands lie along it; y set by layoutAdoption() */
     const sc = mo.score ?? (mo.cls - 1) / 4;
-    a.x = .07 + .84 * sc + (fr(i * 7.13 + .13) - .5) * .045;
-    a.y = mo.unsafe
-      ? EY - .22 - fr(i * 5.71 + .31) * .12
-      : EY + .30 * (1 - sc) + (fr(i * 3.77 + .41) - .5) * .075;
-    a.name = mo.m.id; a.downloads = mo.downloads; a.likes = mo.m.likes || 0;
+    a.x = .07 + .84 * sc + (fr(i * 7.13 + .13) - .5) * .06;
+    a.name = mo.m.id; a.downloads = mo.downloads || 0; a.likes = mo.m.likes || 0;
     a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
     a.source = 'huggingface'; a.steps = mo.steps;
     a.license = (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
@@ -81,7 +74,7 @@
     const gen = pt === 'text-generation' || pt === 'text2text-generation' || tags.includes('text-generation');
     const tools = /instruct|chat|tool|function|agent/.test(id) || tags.some(t => /tool|function.?call/i.test(t));
     const mm = /image-text|vision|vl-|multimodal|omni/.test(pt + ' ' + id) || tags.includes('image-text-to-text');
-    const code = /code|coder|codestral|starcoder/.test(id);
+    const code = /(?<![a-z])(code|coder)|codestral|starcoder|codegen/.test(id);
     const steps = [];
     /* continuous capability score — class boundaries are spectral bands */
     let score = Math.min(1, Math.log10(1 + pm) / 2.5) * .52;
@@ -119,6 +112,7 @@
     for (const mo of ok) { if (i >= 124) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
     for (const mo of bad.slice(0, 4)) { if (i >= 128) break; placeModel(mo, i++); }
     refresh();
+    fitView();
   }
 
   async function loadRegistry() {
@@ -186,15 +180,14 @@
     if (!slot) slot = AGENTS.filter(a => a.revoked === unsafe).sort((x, y) => (x.downloads || 0) - (y.downloads || 0))[0];
     placeModel(rec, slot.i);
     birthIdx = slot.i; birthT = 0;
-    selIdx = slot.i; syncSel();
-    refresh(); openInspector(slot.i);
+    refresh(); select(slot.i, true);
     cxIn.value = ''; cxIn.placeholder = `${m.id.split('/')[1]} → CLASS ${RN[cls - 1]}${unsafe ? ' · RESTRICTED' : ''}`;
     cxIn.disabled = false;
   }
   cxIn.addEventListener('keydown', e => { if (e.key === 'Enter' && cxIn.value.trim()) classifyQuery(cxIn.value); });
   addEventListener('keydown', e => {
     if (e.key === '/' && document.activeElement !== cxIn) { e.preventDefault(); cxIn.focus(); }
-    if (e.key === 'Escape') { selIdx = -1; syncSel(); closeInspector(); cxIn.blur(); }
+    if (e.key === 'Escape') { select(-1); setSheet(null); cxIn.blur(); }
   });
   let cxT;
   cxIn.addEventListener('input', () => {
@@ -212,7 +205,6 @@
   /* ============ GLYPH WORLD ============ */
   const cv = $('stage');
   const gl = cv.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'high-performance' });
-  if (!gl) return;
 
   const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p,0.,1.); }`;
 
@@ -225,6 +217,7 @@ uniform float Net, Ignite, Fall, Zoom, Sel, Cls;
 uniform sampler2D Nodes;
 uniform float Birth, BirthT;
 uniform vec2 PTR, PAN;
+uniform float VX, NS;
 
 /* registry texture — 512x1 RGBA8. 2 texels per node:
    A: x,y as 16-bit (x/1.2, y/0.8).  B: cls*51, revoked, vacant, -.
@@ -245,11 +238,11 @@ float fbm2(vec2 p){ float s=0.,a=.5; for(int i=0;i<3;i++){ s+=a*n2(p); p*=2.13; 
 
 void main(){
   vec2 uv = gl_FragCoord.xy / R;
-  float asp = R.x/R.y;
+  float asp = R.x/R.y/VX;
   float lum = .003 + .006*h2(uv*R + floor(T*9.));
   float threat = 0.;
   vec2 cell = floor(uv*R);
-  vec2 puv = (uv-.5)/Zoom+.5 + PAN + PTR*vec2(.012,.008);
+  vec2 puv = (uv-.5)*vec2(VX,1.)/Zoom+.5 + PAN + PTR*vec2(.012,.008);
 
   float planeOn = clamp(Ignite*2.,0.,1.);
 
@@ -301,13 +294,13 @@ void main(){
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
     float cls=nCls(nb);
-    float sz=.007+cls*.0042;
+    float sz=(.007+cls*.0042)*NS;
     float tw2=.75+.25*sin(T*(1.4+Spike*5.)+float(i)*9.);
     /* class filter — isolate the spectral band */
     float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .10 : 1.;
     float rmul=nb.g>.5?.4:1.;
-    float core=smoothstep(sz,sz*.3,r)*tw2*on*fdim*rmul;
-    float glow=exp(-r*90.)*tw2*on*.55*fdim*rmul;
+    float core=smoothstep(sz,sz*.3,r)*tw2*on*fdim*rmul*.78;
+    float glow=exp(-r*90./NS)*tw2*on*.55*fdim*rmul;
     lum+=core+glow;
     /* birth flare — a newly classified star ignites with a shock ring */
     if(float(i)==Birth && BirthT<4.){
@@ -321,7 +314,7 @@ void main(){
     lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
     /* attestation halo */
     float hon=clamp(Net*1.5-float(i)/128.,0.,1.);
-    float ring=smoothstep(.0045,.0012,abs(r-.021-.002*cls))*hon*.75*fdim;
+    float ring=smoothstep(.0045,.0012,abs(r-(.021+.002*cls)*NS))*hon*.75*fdim;
     lum+=ring;
     classInk=max(classInk,(core+glow+ring)*cls*.2);
     /* selected star — the inspector's ring */
@@ -506,10 +499,10 @@ void main(){
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return { tex, fbo };
   }
+  function dropFB(f) { if (f) { gl.deleteFramebuffer(f.fbo); gl.deleteTexture(f.tex); } }
 
   const GLYPHS = ' .·:;~=+*x#%✦✶★█'.split('').concat('╳◢◣◤◥▚▞░◖◗◈☰ΞΨΩΔ'.split(''));
-  let atlasTex;
-  {
+  function buildAtlas() {
     const CW = 24, CH = 30, ac = document.createElement('canvas');
     ac.width = CW * 32; ac.height = CH;
     const ctx = ac.getContext('2d');
@@ -518,18 +511,15 @@ void main(){
     ctx.font = '600 22px "JetBrains Mono",monospace';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     GLYPHS.forEach((g, i) => ctx.fillText(g, i * CW + CW / 2, CH / 2 + 1));
-    atlasTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, atlasTex);
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ac);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
   }
-
-  const quad = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   function bindQuad(prog) {
     gl.useProgram(prog.p);
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -538,31 +528,66 @@ void main(){
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
   }
 
-  let progScene, progStamp, progDisp, tScene, fbA, fbB, cols, rows, W, H, dpr;
-  try {
-    progScene = program(FS_SCENE);
-    progStamp = program(FS_STAMP);
-    progDisp = program(FS_DISPLAY);
-  } catch (e) {
-    console.error('[4C] shader:', e.message);
-    return;
+  /* viewport — W/H in css px; VX = visible world width at zoom 1.
+     Portrait screens show a slice of the spectrum and pan for the rest. */
+  let W = innerWidth, H = innerHeight, VX = 1, mobile = false;
+  let CELL_W = 10, CELL_H = 15, cols = 0, rows = 0, dpr = 1;
+  function measure() {
+    W = innerWidth; H = innerHeight;
+    mobile = W < 900 || matchMedia('(pointer: coarse)').matches;
+    VX = clamp((W / H) * 1.5, .62, 1);
+    const small = W < 700;
+    CELL_W = small ? 8 : 10; CELL_H = small ? 12 : 15;
+    dpr = Math.min(devicePixelRatio || 1, small ? 1.25 : 1.5);
   }
 
-  let CELL_W = 10, CELL_H = 15;
-  function resize() {
-    const small = innerWidth < 700;
-    CELL_W = small ? 12 : 10; CELL_H = small ? 18 : 15;
-    dpr = Math.min(devicePixelRatio || 1, small ? 1.25 : 1.5);
-    W = innerWidth; H = innerHeight;
-    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-    cols = Math.max(32, Math.round(cv.width / (CELL_W * dpr)));
-    rows = Math.max(20, Math.round(cv.height / (CELL_H * dpr)));
+  /* GL resources — rebuilt from scratch on context restore */
+  let glOK = false, atlasTex, quad, nodeTex, progScene, progStamp, progDisp, tScene, fbA, fbB;
+  function allocTargets() {
+    const pw = Math.round(W * dpr), ph = Math.round(H * dpr);
+    const nc = Math.max(32, Math.round(pw / (CELL_W * dpr))), nr = Math.max(20, Math.round(ph / (CELL_H * dpr)));
+    if (tScene && pw === cv.width && ph === cv.height && nc === cols && nr === rows) return;
+    cv.width = pw; cv.height = ph; cols = nc; rows = nr;
+    [tScene, fbA, fbB].forEach(dropFB);
     tScene = makeFB(cols, rows);
-    fbA = makeFB(cv.width, cv.height);
-    fbB = makeFB(cv.width, cv.height);
+    fbA = makeFB(pw, ph);
+    fbB = makeFB(pw, ph);
   }
-  resize();
-  addEventListener('resize', resize, { passive: true });
+  function initGL() {
+    glOK = false;
+    if (!gl || gl.isContextLost()) return;
+    try {
+      progScene = program(FS_SCENE);
+      progStamp = program(FS_STAMP);
+      progDisp = program(FS_DISPLAY);
+    } catch (e) {
+      console.error('[safety.vims] shader:', e.message);
+      return;
+    }
+    atlasTex = buildAtlas();
+    quad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    nodeTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, nodeTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    tScene = fbA = fbB = null;
+    allocTargets();
+    glOK = true;
+    uploadNodes();
+  }
+  measure();
+  let resizeQ = false;
+  addEventListener('resize', () => {
+    if (resizeQ) return;
+    resizeQ = true;
+    requestAnimationFrame(() => { resizeQ = false; measure(); if (glOK) allocTargets(); fitView(); });
+  }, { passive: true });
+  cv.addEventListener('webglcontextlost', e => { e.preventDefault(); glOK = false; });
+  cv.addEventListener('webglcontextrestored', initGL);
 
   /* ---- HUD wiring ---- */
   const labelsEl = document.createElement('div');
@@ -573,10 +598,24 @@ void main(){
     const s = document.createElement('span');
     s.textContent = RN[c - 1];
     s.dataset.c = c;
-    s.dataset.x = .08 + .80 * (c - 1) / 4;
-    s.dataset.y = EY + .345 - (c - 1) * .05;
-    s.style.cssText = `position:absolute;font-size:10px;letter-spacing:.2em;color:${CLS_HEX[c - 1]};
-      transform:translate(-50%,-190%);opacity:.75;text-shadow:0 0 8px ${CLS_HEX[c - 1]}66`;
+    s.dataset.x = .07 + .84 * [.075, .25, .465, .68, .89][c - 1];
+    s.dataset.y = EY + .6;
+    s.style.cssText = `position:absolute;left:0;top:0;font-size:10px;letter-spacing:.2em;color:${CLS_HEX[c - 1]};
+      opacity:.75;text-shadow:0 0 8px ${CLS_HEX[c - 1]}66;will-change:transform`;
+    labelsEl.appendChild(s);
+    return s;
+  });
+
+  /* axis captions — what the two dimensions of the sky mean */
+  const axes = [
+    ['CAPABILITY SCORE →', .91, EY + .025, 'translate(-100%,-50%)'],
+    ['↑ ADOPTION · download rank', .02, EY + .5, 'translate(0,-50%) rotate(-90deg) translate(0,-100%)'],
+    ['CERTIFICATION PLANE', .02, EY + .032, 'translate(0,-50%)'],
+  ].map(([txt, x, y, tf]) => {
+    const s = document.createElement('span');
+    s.textContent = txt; s.dataset.x = x; s.dataset.y = y; s.dataset.tf = tf;
+    s.style.cssText = `position:absolute;left:0;top:0;font-size:8.5px;letter-spacing:.24em;color:var(--dim);
+      opacity:.7;white-space:nowrap;transform-origin:0 50%;will-change:transform`;
     labelsEl.appendChild(s);
     return s;
   });
@@ -585,8 +624,8 @@ void main(){
   const nodeLabels = AGENTS.map(() => {
     const s = document.createElement('span');
     s.className = 'node-lb';
-    s.style.cssText = `position:absolute;font-size:9px;letter-spacing:.1em;color:var(--dim);
-      transform:translate(-50%,150%);opacity:0;white-space:nowrap;transition:opacity .2s`;
+    s.style.cssText = `position:absolute;left:0;top:0;font-size:9px;letter-spacing:.1em;color:var(--dim);
+      opacity:0;white-space:nowrap;transition:opacity .2s;text-shadow:0 0 4px #000,0 0 2px #000;will-change:transform`;
     labelsEl.appendChild(s);
     return s;
   });
@@ -595,18 +634,14 @@ void main(){
   const rosterRows = AGENTS.map(a => {
     const r = document.createElement('div');
     r.className = 'ro-row' + (a.revoked ? ' rev' : '');
-    r.onclick = () => {
-      if (!a.used) return;
-      if (selIdx === a.i) { selIdx = -1; closeInspector(); }
-      else { selIdx = a.i; openInspector(a.i); }
-      syncSel();
-    };
+    r.onclick = () => { if (a.used) select(selIdx === a.i ? -1 : a.i, true); };
     rosterEl.appendChild(r);
     return r;
   });
   function rebuildRoster() {
     AGENTS.forEach((a, i) => {
       const r = rosterRows[i];
+      nodeLabels[i].textContent = a.used ? a.name.split('/').pop() : '';
       if (!a.used) {
         r.className = 'ro-row vac' + (i === selIdx ? ' sel' : '');
         r.title = 'vacant — classify a model to fill';
@@ -621,54 +656,138 @@ void main(){
   }
 
   let selIdx = -1, hoverIdx = -1;
-  let mx = -1, my = -1;
 
   function syncSel() {
     rosterRows.forEach((r, i) => r.classList.toggle('sel', i === selIdx));
+    const r = rosterRows[selIdx];
+    if (r) r.scrollIntoView({ block: 'nearest' });
   }
 
-  addEventListener('pointermove', e => {
-    mx = e.clientX; my = e.clientY;
-    const u = e.clientX / W, v = 1 - e.clientY / H;
-    const ux = (u - .5) / zoom + .5 + pan.x, uy = (v - .5) / zoom + .5 + pan.y;
-    hoverIdx = -1;
-    let best = .004;
-    for (const a of AGENTS) {
-      if (!a.used) continue;
-      const dx = (ux - a.x) * (W / H), dy = uy - a.y;
-      const d = dx * dx + dy * dy;
-      if (d < best) { best = d; hoverIdx = a.i; }
-    }
-    document.body.style.cursor = dragging ? 'grabbing' : (hoverIdx >= 0 ? 'crosshair' : 'grab');
-  }, { passive: true });
-
-  /* ---- traversal: drag to pan, wheel to zoom, click to inspect ---- */
+  /* ---- camera — one transform for shader, picking, labels, fly-to ---- */
   let zoom = ZOOM, zoomT = ZOOM;
   const pan = { x: 0, y: 0 }, panT = { x: 0, y: 0 };
-  let dragging = false, dragX = 0, dragY = 0, movedPx = 0;
+  let px = 0, py = 0, pxx = 0, pyy = 0;
+  const ZMIN = .5, ZMAX = 4;
+  const toScreen = (wx, wy) => [
+    (.5 + (wx - .5 - pan.x - px * .012) * zoom / VX) * W,
+    (.5 - (wy - .5 - pan.y - py * .008) * zoom) * H,
+  ];
+  const clampPan = () => {
+    panT.x = clamp(panT.x, -.45, .45);
+    panT.y = clamp(panT.y, -.38, .38);
+  };
+  /* zoom about a screen point — the world under it stays put */
+  function zoomAt(sx, sy, z) {
+    z = clamp(z, ZMIN, ZMAX);
+    const u = sx / W - .5, v = .5 - sy / H;
+    panT.x += u * VX * (1 / zoomT - 1 / z);
+    panT.y += v * (1 / zoomT - 1 / z);
+    zoomT = z; clampPan();
+  }
+  /* fly the camera so node i sits clear of the inspector */
+  function flyTo(i) {
+    const a = AGENTS[i];
+    if (mobile) zoomT = Math.max(zoomT, 1.5);
+    const ut = mobile ? .5 : .62, vt = mobile ? .74 : .5;
+    panT.x = a.x - .5 - (ut - .5) * VX / zoomT;
+    panT.y = a.y - .5 - (vt - .5) / zoomT;
+    clampPan();
+  }
+  let userCam = false;
+  function fitView() {
+    const live = AGENTS.filter(a => a.used);
+    if (!live.length || userCam) return;
+    const xs = live.map(a => a.x), ys = live.map(a => a.y);
+    const x0 = Math.min(...xs, .03), x1 = Math.max(...xs, .92), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .62);
+    const topH = document.querySelector('.top').getBoundingClientRect().bottom;
+    const L = mobile ? 14 : 320, R = mobile ? 14 : 280, T = topH + 24, B = mobile ? 70 : 50;
+    const aw = Math.max(80, W - L - R), ah = Math.max(80, H - T - B);
+    const z = clamp(Math.min(aw * VX / ((x1 - x0 + .04) * W), ah / ((y1 - y0 + .06) * H)), ZMIN, ZMAX);
+    const ax = (L + aw / 2) / W, ay = (T + ah / 2) / H;
+    zoomT = z;
+    panT.x = (x0 + x1) / 2 - .5 - (ax - .5) * VX / z;
+    panT.y = (y0 + y1) / 2 - .5 - (.5 - ay) / z;
+    clampPan();
+  }
+  function pick(sx, sy, radius) {
+    let best = radius * radius, hit = -1;
+    for (const a of AGENTS) {
+      if (!a.used || (filterCls && a.cls !== filterCls)) continue;
+      const [x, y] = toScreen(a.x, a.y);
+      const d = (x - sx) ** 2 + (y - sy) ** 2;
+      if (d < best) { best = d; hit = a.i; }
+    }
+    return hit;
+  }
+  function select(i, fly) {
+    selIdx = i; syncSel();
+    if (i < 0) { closeInspector(); return; }
+    setSheet(null);
+    openInspector(i);
+    if (fly) { userCam = true; flyTo(i); }
+  }
+
+  /* ---- traversal: drag/pinch to pan+zoom, wheel zooms to cursor, tap inspects ---- */
+  const ptrs = new Map();
+  let movedPx = 0, pinch = null;
+  const mid = () => { const p = [...ptrs.values()]; return [(p[0].x + p[1].x) / 2, (p[0].y + p[1].y) / 2, Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y)]; };
   cv.addEventListener('pointerdown', e => {
-    dragging = true; movedPx = 0; dragX = e.clientX; dragY = e.clientY;
     cv.setPointerCapture(e.pointerId);
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 1) movedPx = 0;
+    if (ptrs.size === 2) { const [mx, my, d] = mid(); pinch = { mx, my, d, z: zoomT }; movedPx = 99; }
   });
   cv.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    const dx = e.clientX - dragX, dy = e.clientY - dragY;
-    movedPx += Math.abs(dx) + Math.abs(dy);
-    dragX = e.clientX; dragY = e.clientY;
-    panT.x = clamp(panT.x - dx / (W * zoom), -.35, .35);
-    panT.y = clamp(panT.y + dy / (H * zoom), -.3, .3);
-  });
-  cv.addEventListener('pointerup', e => {
-    dragging = false;
-    if (movedPx < 6) {          /* click, not drag */
-      if (hoverIdx >= 0) { selIdx = hoverIdx; syncSel(); openInspector(hoverIdx); }
-      else { selIdx = -1; syncSel(); closeInspector(); }
+    if (e.pointerType === 'mouse') {
+      pxx = e.clientX / W - .5; pyy = e.clientY / H - .5;
+      hoverIdx = ptrs.size ? -1 : pick(e.clientX, e.clientY, 22);
+      cv.style.cursor = ptrs.size ? 'grabbing' : (hoverIdx >= 0 ? 'pointer' : 'grab');
+    }
+    const p = ptrs.get(e.pointerId);
+    if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX; p.y = e.clientY;
+    if (ptrs.size === 1) {
+      movedPx += Math.abs(dx) + Math.abs(dy);
+      if (movedPx > 8) userCam = true;
+      panT.x -= dx * VX / (W * zoomT);
+      panT.y += dy / (H * zoomT);
+      clampPan();
+    } else if (pinch) {
+      const [mx, my, d] = mid();
+      panT.x -= (mx - pinch.mx) * VX / (W * zoomT);
+      panT.y += (my - pinch.my) / (H * zoomT);
+      pinch.mx = mx; pinch.my = my;
+      zoomAt(mx, my, pinch.z * d / pinch.d);
+      userCam = true;
     }
   });
+  const release = e => {
+    if (!ptrs.delete(e.pointerId)) return;
+    if (ptrs.size < 2) pinch = null;
+    if (ptrs.size || e.type === 'pointercancel' || movedPx >= 8) return;
+    const hit = pick(e.clientX, e.clientY, e.pointerType === 'mouse' ? 22 : 34);
+    select(hit, hit >= 0 && mobile);
+  };
+  cv.addEventListener('pointerup', release);
+  cv.addEventListener('pointercancel', release);
+  cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { hoverIdx = -1; pxx = pyy = 0; } });
   cv.addEventListener('wheel', e => {
     e.preventDefault();
-    zoomT = clamp(zoomT * Math.exp(-e.deltaY * .0011), .5, 2.6);
+    zoomAt(e.clientX, e.clientY, zoomT * Math.exp(-e.deltaY * .0011));
+    userCam = true;
   }, { passive: false });
+
+  /* ---- mobile sheets: registry / classes ---- */
+  function setSheet(name) {
+    document.body.classList.toggle('sheet-roster', name === 'roster');
+    document.body.classList.toggle('sheet-legend', name === 'legend');
+    document.querySelectorAll('.mbar [data-sheet]').forEach(b => b.classList.toggle('on', b.dataset.sheet === name));
+    if (name) closeInspector();
+  }
+  document.querySelectorAll('.mbar [data-sheet]').forEach(b => b.addEventListener('click', () => {
+    setSheet(document.body.classList.contains('sheet-' + b.dataset.sheet) ? null : b.dataset.sheet);
+  }));
 
   /* ---- inspector: real model card + benchmark aggregation ---- */
   const insp = $('insp');
@@ -725,7 +844,7 @@ void main(){
       : 'none declared on model card';
   }
   function closeInspector() { insp.style.display = 'none'; }
-  $('in-x').onclick = closeInspector;
+  $('in-x').onclick = () => select(-1);
 
   /* legend class filter */
   let filterCls = 0;
@@ -740,13 +859,12 @@ void main(){
 
   /* registry texture — the sky renders actual node data, not uniform
      arrays. Uniform-vector ceilings can't cap the node count. */
-  const nodeData = new Uint8Array(512 * 4), nodeTex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, nodeTex);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
+  const nodeData = new Uint8Array(512 * 4);
+  function uploadNodes() {
+    if (!glOK) return;
+    gl.bindTexture(gl.TEXTURE_2D, nodeTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
+  }
   function syncStars() {
     AGENTS.forEach((a, i) => {
       const o = i * 8;
@@ -771,12 +889,24 @@ void main(){
     pairs.slice(0, 48).forEach(([a, b], e) => {
       nodeData[(256 + e) * 4] = a; nodeData[(256 + e) * 4 + 1] = b;
     });
-    gl.bindTexture(gl.TEXTURE_2D, nodeTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 512, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, nodeData);
+    uploadNodes();
+  }
+  /* H–R y-axis: adoption = download rank among plotted models.
+     Attested rise above the plane, restricted mirror below it. */
+  function layoutAdoption() {
+    for (const bad of [false, true]) {
+      const set = AGENTS.filter(a => a.used && a.revoked === bad).sort((p, q) => p.downloads - q.downloads);
+      set.forEach((a, k) => {
+        const ad = set.length > 1 ? k / (set.length - 1) : .5;
+        a.y = bad
+          ? EY - .05 - .2 * ad + (fr(a.i * 5.71 + .31) - .5) * .02
+          : EY + .05 + .5 * ad + (fr(a.i * 3.77 + .41) - .5) * .02;
+      });
+    }
   }
   let registryTotal = 0;
   function refresh() {
-    syncStars(); rebuildRoster();
+    layoutAdoption(); syncStars(); rebuildRoster();
     $('st-reg').textContent = registryTotal || AGENTS.filter(a => a.used).length;
     $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
@@ -787,13 +917,13 @@ void main(){
   }
   syncStars();
   refresh();
+  cxIn.placeholder = mobile ? 'owner/model or URL' : 'classify a model — owner/name';
+  initGL();
+  if (!glOK) document.body.classList.add('nogl');
   loadRegistry();
 
   /* ---- frame ---- */
-  let px = 0, py = 0, pxx = 0, pyy = 0, t = 0, lastNow = performance.now();
-  addEventListener('pointermove', e => {
-    pxx = e.clientX / W - .5; pyy = e.clientY / H - .5;
-  }, { passive: true });
+  let t = 0, lastNow = performance.now();
 
   function draw(now) {
     const dt = Math.min(((now || performance.now()) - lastNow) / 1000, .05);
@@ -815,6 +945,12 @@ void main(){
     const boot = 1 - Math.pow(1 - Math.min(1, t / 1.4), 3);
     const collapse = 1 - boot;
 
+    if (glOK) renderPasses(ignite, net, glitch, collapse, dr, dg, db2);
+    placeLabels();
+    requestAnimationFrame(draw);
+  }
+
+  function renderPasses(ignite, net, glitch, collapse, dr, dg, db2) {
     /* pass 1 */
     gl.bindFramebuffer(gl.FRAMEBUFFER, tScene.fbo);
     gl.viewport(0, 0, cols, rows);
@@ -840,6 +976,8 @@ void main(){
     gl.uniform1f(u.Fall, 1);
     gl.uniform1f(u.Zoom, zoom);
     gl.uniform2f(u.PAN, pan.x, pan.y);
+    gl.uniform1f(u.VX, VX);
+    gl.uniform1f(u.NS, mobile ? .6 : .82);
     gl.uniform1f(u.Sel, selIdx);
     gl.uniform1f(u.Cls, filterCls);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, nodeTex);
@@ -881,32 +1019,49 @@ void main(){
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     const tmp = fbA; fbA = fbB; fbB = tmp;
+  }
 
-    /* class labels track zoomed positions */
-    for (let i = 0; i < labels.length; i++) {
-      const s = labels[i], c = +s.dataset.c;
-      const lx = ((+s.dataset.x - .5 - pan.x) * zoom + .5) * 100;
-      const ly = (.5 - (+s.dataset.y - .5 - pan.y) * zoom) * 100;
-      s.style.left = lx + '%';
-      s.style.top = ly + '%';
+  /* labels — screen-space, greedy collision culling in priority order:
+     selected, hovered, then registry rank. Dense regions show only what fits. */
+  const LB_H = 13, rects = [];
+  const order = [];
+  function placeLabels() {
+    for (const s of labels) {
+      const c = +s.dataset.c;
+      const [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
+      s.style.transform = `translate(${x}px,${y}px) translate(-50%,-190%)`;
       s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
     }
-    /* node name labels */
-    for (let i = 0; i < 128; i++) {
-      const a = AGENTS[i], s = nodeLabels[i];
-      if (!a.used) { s.style.opacity = 0; continue; }
-      const lx = ((a.x - .5 - pan.x) * zoom + .5) * 100;
-      const ly = (.5 - (a.y - .5 - pan.y) * zoom) * 100;
-      s.textContent = a.name.split('/').pop();
-      s.style.left = lx + '%';
-      s.style.top = ly + '%';
-      const hot = i === selIdx || i === hoverIdx;
-      const vis = hot ? 1 : i < 24 ? .62 : clamp((zoom - .95) / .5, 0, 1) * .6;
-      s.style.color = hot ? CLS_HEX[a.cls - 1] : 'var(--dim)';
-      s.style.opacity = filterCls && a.cls !== filterCls ? .05 : vis;
+    for (const s of axes) {
+      const [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
+      s.style.transform = `translate(${x}px,${y}px) ${s.dataset.tf}`;
+      s.style.opacity = glOK ? .7 : 0;
     }
-
-    requestAnimationFrame(draw);
+    order.length = 0;
+    if (selIdx >= 0) order.push(selIdx);
+    if (hoverIdx >= 0 && hoverIdx !== selIdx) order.push(hoverIdx);
+    for (let i = 0; i < AGENTS.length; i++) if (i !== selIdx && i !== hoverIdx) order.push(i);
+    rects.length = 0;
+    const budget = mobile ? (zoom > 1.6 ? 40 : zoom > 1.2 ? 16 : 8) : (zoom > 1.4 ? 128 : zoom > 1.05 ? 48 : 24);
+    let shown = 0;
+    for (const i of order) {
+      const a = AGENTS[i], s = nodeLabels[i];
+      const hot = i === selIdx || i === hoverIdx;
+      let vis = 0;
+      if (a.used && glOK && !(filterCls && a.cls !== filterCls) && (hot || shown < budget)) {
+        const [x, y] = toScreen(a.x, a.y);
+        const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;
+        const onScreen = x > 4 && x < W - 4 && y > 0 && y < H - 20;
+        if (onScreen && (hot || !rects.some(r => l < r[2] && l + w > r[0] && tp < r[3] && tp + LB_H > r[1]))) {
+          const cx = clamp(x, w / 2 + 2, W - w / 2 - 2);
+          rects.push([cx - w / 2, tp, cx + w / 2, tp + LB_H]);
+          s.style.transform = `translate(${cx}px,${y}px) translate(-50%,8px)`;
+          vis = hot ? 1 : .62; shown++;
+        }
+      }
+      s.style.color = hot ? CLS_HEX[a.cls - 1] : 'var(--dim)';
+      s.style.opacity = vis;
+    }
   }
   requestAnimationFrame(draw);
 })();
