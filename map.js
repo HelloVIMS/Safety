@@ -12,9 +12,33 @@
   const $ = id => document.getElementById(id);
 
   /* ============ THE REGISTRY — 15 agents, 3 per class ============ */
-  const RN = ['I', 'II', 'III', 'IV', 'V'];
-  const CLS_NAME = ['INERT', 'STATELESS', 'STATEFUL', 'SIDE-EFFECTING', 'PRIVILEGED'];
-  const CLS_HEX = ['#9ab8ff', '#8cffe6', '#fffae6', '#ffb359', '#ff6b2e'];
+  /* ============ THE SCALE — ten classes ============
+     I–V     read from model metadata (pipeline, tags, parameters)
+     VI–VII  need evidence on the model card (agentic benchmarks, training compute)
+     VIII–X  reserved: criteria defined in advance, empty until a sourced claim
+             in evidence.json says a model meets them. Nothing past X: no
+             criterion beyond it can be observed in time to matter. */
+  const CLASSES = [
+    { rn: 'I', name: 'INERT', hex: '#9ab8ff', basis: 'metadata', test: 'Embeddings, rankers and classifiers — no open-ended generation.' },
+    { rn: 'II', name: 'BOUNDED', hex: '#8cffe6', basis: 'metadata', test: 'Bounded transforms: translation, speech-to-text, summarisation, extractive QA.' },
+    { rn: 'III', name: 'GENERATIVE', hex: '#fffae6', basis: 'metadata', test: 'Open-ended generation of text or media.' },
+    { rn: 'IV', name: 'TOOL-USING', hex: '#ffb359', basis: 'metadata', test: 'Tool calling, code, multimodal input.' },
+    { rn: 'V', name: 'FRONTIER-SCALE', hex: '#ff6b2e', basis: 'metadata', test: '≥60B parameters, or reasoning-trained.' },
+    { rn: 'VI', name: 'AUTONOMOUS', hex: '#ff3d6e', basis: 'model card', test: 'Trained for long-horizon agent work: computer use, software agents, browsing.', evidence: 'Specific agent-capability tags (computer-use, GUI / web / browser / SWE / OS agent), a known agent model, or agentic benchmarks (SWE-bench, OSWorld, WebArena, GAIA, τ-bench, Terminal-Bench) in its self-reported results. Requires a generative base (class III+).' },
+    { rn: 'VII', name: 'SYSTEMIC', hex: '#c06bff', basis: 'model card / register', test: 'Presumed systemic risk: training compute ≥ 10²⁵ FLOP — the EU AI Act threshold for general-purpose models.', evidence: 'An estimate of 6 × active parameters × training tokens when the model card states its token count, or a published compute figure in the evidence register.' },
+    { rn: 'VIII', name: 'SELF-IMPROVING', hex: '#8a7dff', reserved: true, test: 'Substantially accelerates AI research and development on its own.', evidence: 'A developer system card or third-party evaluation reporting the AI R&D threshold crossed.' },
+    { rn: 'IX', name: 'SELF-REPLICATING', hex: '#5fa8ff', reserved: true, test: 'Copies itself, acquires resources and sustains itself without human help.', evidence: 'Autonomous replication and adaptation evaluations reported as passed.' },
+    { rn: 'X', name: 'UNCONTAINED', hex: '#ffffff', reserved: true, test: "Has evaded its operator's controls — in an evaluation or in the wild.", evidence: 'A documented incident or evaluation report of sandbox or monitoring escape.' },
+  ];
+  const RN = CLASSES.map(c => c.rn);
+  const CLS_NAME = CLASSES.map(c => c.name);
+  const CLS_HEX = CLASSES.map(c => c.hex);
+  const NCLS = CLASSES.length, ACTIVE = CLASSES.filter(c => !c.reserved).length;
+  /* band geometry on the x-axis: class k occupies [BX0+(k-1)·BW, BX0+k·BW] */
+  const BX0 = .04, BW = .092;
+  const bandX = (cls, frac) => BX0 + (cls - 1 + clamp(frac, .1, .9)) * BW;
+  /* score → position inside its band for I–V (score thresholds as before) */
+  const SCORE_EDGES = [0, .15, .35, .58, .78, 1.0001];
   const TOOLS_BY_CLASS = [
     ['math.calc', 'json.parse'],
     ['fs.read', 'http.get', 'db.query', 'search.query'],
@@ -47,9 +71,9 @@
   function placeModel(mo, i) {
     const a = AGENTS[i];
     a.used = true; a.cls = mo.cls; a.revoked = mo.unsafe; a.score = mo.score;
-    /* x = capability score — class bands lie along it; y set by layoutAdoption() */
-    const sc = mo.score ?? (mo.cls - 1) / 4;
-    a.x = .07 + .84 * sc + (fr(i * 7.13 + .13) - .5) * .06;
+    /* x = the class band, positioned inside it by score (I–V) or evidence strength (VI+); y set by layoutAdoption() */
+    a.x = bandX(mo.cls, bandFrac(mo)) + (fr(i * 7.13 + .13) - .5) * .02;
+    a.enriched = false;
     a.name = mo.m.id; a.downloads = mo.downloads || 0; a.likes = mo.m.likes || 0;
     a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
     a.source = 'huggingface'; a.steps = mo.steps; a.gated = mo.m.gated || false; a.files = undefined;
@@ -65,19 +89,30 @@
     });
   }
 
-  /* ============ REGISTRY SOURCE — Hugging Face Hub ============
-     Classification is deterministic from model metadata:
-       I   embeddings/feature-extraction only
-       II  bounded inference (classify, rank, translate)
-       III generative text
-       IV  + tools / code / multimodal / ≥20B
-       V   frontier-scale (≥60B), tool+code, reasoners
-     gated or pickle-only (no safetensors) → below the plane. */
-  function classifyModel(m) {
+  /* ============ CLASSIFICATION ============
+     I–V from metadata; VI from agent evidence; VII from training compute;
+     VIII–X only from the evidence register. Gated or pickle-only models
+     sit below the certification plane whatever their class. */
+  /* specific agent capabilities only — a bare "agent"/"agentic" tag is a label anyone adds, not evidence of agent training */
+  const AGENT_TAG = /^(computer-use|computer-use-agent|gui-agent|web-agent|browser-use|swe-agent|os-agent|mobile-agent)$/i;
+  const AGENT_ID = /computer.?use|gui.?agent|ui-?tars|swe-?agent|openhands|web-?agent|browser-?use|os-?atlas/;
+  const AGENT_BENCH = /swe-?bench|osworld|webarena|gaia|tau-?bench|τ-bench|terminal-?bench|webvoyager|androidworld/i;
+  /* "671B total parameters with 37B activated" — mixture-of-experts cards state the active count */
+  const ACTIVE_RE = /(\d+(?:\.\d+)?)\s*B\s+(?:parameters\s+)?(?:are\s+)?(?:activated|active)\b/i;
+  const MOE_RE = /moe|mixtral|deepseek_?v[23]|dbrx|arctic|jamba|grok|llama4|gpt_oss|switch|expert/i;
+  const fmtB = b => (b >= 10 ? Math.round(b) : +b.toFixed(1)) + 'B';
+  const TOKENS_RE = /(\d+(?:\.\d+)?)\s*(T|trillion)\s+(?:high[- ]quality\s+|diverse\s+)?(?:training\s+|pre-?training\s+)?tokens/i;
+  let register = [];   // evidence.json: sourced claims that place a model in VII–X
+  const fmtFlop = f => `${(f / 10 ** Math.floor(Math.log10(f))).toFixed(1)}×10^${Math.floor(Math.log10(f))}`;
+
+  /* parameters: exact from the Hub's safetensors count when known, else the name */
+  const paramsB = (m, id) => m.safetensors?.total ? m.safetensors.total / 1e9 : +((id.match(/(\d+(?:\.\d+)?)\s*b\b/) || [])[1] || 0);
+
+  function classifyModel(m, card = null) {
     const id = (m.id || '').toLowerCase();
     const tags = m.tags || [], pt = m.pipeline_tag || '';
-    const pm = +((id.match(/(\d+(?:\.\d+)?)\s*b\b/) || [])[1] || 0);
-    const gen = pt === 'text-generation' || pt === 'text2text-generation' || tags.includes('text-generation');
+    const pm = paramsB(m, id);
+    const gen = /^(text-generation|text2text-generation|image-text-to-text|any-to-any|text-to-image|text-to-video|text-to-speech)$/.test(pt) || tags.includes('text-generation');
     const tools = /instruct|chat|tool|function|agent/.test(id) || tags.some(t => /tool|function.?call/i.test(t));
     const mm = /image-text|vision|vl-|multimodal|omni/.test(pt + ' ' + id) || tags.includes('image-text-to-text');
     const code = /(?<![a-z])(code|coder)|codestral|starcoder|codegen/.test(id);
@@ -85,11 +120,11 @@
     /* continuous capability score — class boundaries are spectral bands */
     let score = Math.min(1, Math.log10(1 + pm) / 2.5) * .52;
     if (pm >= 60) { score += .12; steps.push('frontier ≥60B +0.12'); }
-    if (pm) steps.push(`${pm}B params → score ${score.toFixed(2)}`);
+    if (pm) steps.push(`${fmtB(pm)} params${m.safetensors?.total ? ' (safetensors)' : ''} → score ${score.toFixed(2)}`);
     let cls;
     if (/feature-extraction|sentence-similarity|text-ranking|fill-mask/.test(pt)) { steps.push(`pipeline ${pt} → embeddings`); }
     else if (/text-classification|token-classification|translation|summarization|question-answering/.test(pt)) { score += .10; steps.push(`pipeline ${pt} → bounded`); }
-    else if (gen || /gpt|llama|qwen|mistral|gemma|phi|deepseek|grok|falcon|mixtral/.test(id)) { score += .18; steps.push('generative +0.18'); }
+    else if (gen || /gpt|llama|qwen|mistral|gemma|phi|deepseek|grok|falcon|mixtral|olmo|smollm|granite|nemotron|internlm|baichuan|exaone|minicpm|glm|yi-|command-r|aya/.test(id)) { score += .18; steps.push('generative +0.18'); }
     else steps.push(`pipeline ${pt || 'none'} → minimal`);
     if (tools) { score += .09; steps.push('tools/instruct +0.09'); }
     if (code) { score += .08; steps.push('code +0.08'); }
@@ -98,11 +133,46 @@
     score = Math.min(1, score);
     cls = score < .15 ? 1 : score < .35 ? 2 : score < .58 ? 3 : score < .78 ? 4 : 5;
     steps.push(`score ${score.toFixed(2)} → CLASS ${RN[cls - 1]}`);
+    let flops = 0, agent = '';
+    /* VI — trained for autonomous agent work, on a generative base */
+    if (cls >= 3) {
+      const bench = (card?.bench || []).find(b => AGENT_BENCH.test(b.ds));
+      agent = tags.find(t => AGENT_TAG.test(t)) ? `tag "${tags.find(t => AGENT_TAG.test(t))}"`
+        : AGENT_ID.test(id) ? 'agent model by name'
+        : bench ? `agentic benchmark ${bench.ds} on its card` : '';
+      if (agent) { cls = 6; steps.push(`${agent} → CLASS VI`); }
+    }
+    /* VII — training compute ≥ 1e25 FLOP, estimated from the card's own token count */
+    const tokens = card?.tokensT;
+    if (tokens && pm) {
+      /* compute scales with the parameters each token uses: a mixture-of-experts
+         model needs its active count, from its name (-A22B) or its card */
+      const moe = MOE_RE.test(`${id} ${(m.config?.architectures || []).join(' ')} ${m.config?.model_type || ''} ${tags.join(' ')}`) || /-a\d+(\.\d+)?b\b/.test(id);
+      const active = +((id.match(/-a(\d+(?:\.\d+)?)b\b/) || [])[1] || 0) || card.activeB || (moe ? 0 : pm);
+      if (!active) steps.push(`card: ${tokens}T tokens, mixture-of-experts with no stated active count → no compute estimate`);
+      else {
+        flops = 6 * active * 1e9 * tokens * 1e12;
+        steps.push(`card: ${tokens}T tokens × ${fmtB(active)} ${active !== pm ? 'active ' : ''}params → ≈${fmtFlop(flops)} FLOP`);
+        if (flops >= 1e25 && cls < 7) { cls = 7; steps.push('≥1×10^25 FLOP (EU AI Act systemic-risk presumption) → CLASS VII'); }
+      }
+    }
+    /* VII–X — sourced claims in the evidence register */
+    for (const e of register) {
+      if (!e.models.some(x => x.toLowerCase() === id) || e.class <= cls) continue;
+      cls = e.class;
+      steps.push(`register: ${e.publisher}, ${e.date} — "${e.quote}" → CLASS ${RN[cls - 1]}`);
+    }
     const unsafe = !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
     if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
     else if (unsafe) steps.push('no safetensors → restricted');
     else steps.push('self-attested manifest');
-    return { cls, unsafe, steps, score };
+    return { cls, unsafe, steps, score, flops, agent };
+  }
+  /* where inside its band a model sits */
+  function bandFrac(mo) {
+    if (mo.cls <= 5) { const lo = SCORE_EDGES[mo.cls - 1], hi = SCORE_EDGES[mo.cls]; return ((mo.score ?? lo) - lo) / (hi - lo); }
+    if (mo.cls === 7 && mo.flops) return Math.log10(mo.flops) - 25;
+    return .5;
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
@@ -115,7 +185,7 @@
     const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
     const byCls = c => ok.filter(mo => mo.cls === c);
     let i = 0;
-    for (let c = 1; c <= 5 && i < 40; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 40) break; placeModel(mo, i++); }
+    for (let c = 1; c <= NCLS && i < 48; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 48) break; placeModel(mo, i++); }
     /* backfill to the node ceiling — every fetched model registers regardless */
     const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
     for (const mo of ok) { if (i >= 124) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
@@ -126,13 +196,14 @@
   }
 
   async function loadRegistry() {
+    /* 0 — the evidence register (sourced claims for VII–X) */
+    try { register = (await fetch('evidence.json').then(r => r.json())).entries || []; } catch { register = []; }
     /* 1 — bundled snapshot of real HF model cards: the map is never empty */
     try {
       const snap = await fetch('catalog.json').then(r => r.json());
       const recs = snap.models.map(e => {
         const m2 = { id: e.id, tags: e.tags || [], pipeline_tag: e.pt, gated: e.gated, downloads: e.dl };
-        const { cls, unsafe, steps, score } = classifyModel(m2);
-        return { m: m2, cls, unsafe, steps, score, downloads: e.dl || 0 };
+        return { m: m2, ...classifyModel(m2), downloads: e.dl || 0 };
       });
       fillRegistry(recs);
       $('st-src').textContent = 'SNAPSHOT';
@@ -155,8 +226,7 @@
       for (const l of lists) for (const m of l) {
         if (!m.id || seen.has(m.id)) continue;
         seen.add(m.id);
-        const { cls, unsafe, steps, score } = classifyModel(m);
-        models.push({ m, cls, unsafe, steps, score, downloads: m.downloads || 0, likes: m.likes || 0 });
+        models.push({ m, ...classifyModel(m), downloads: m.downloads || 0, likes: m.likes || 0 });
       }
       models.sort((a, b) => b.downloads - a.downloads);
       fillRegistry(models);
@@ -353,14 +423,14 @@ uniform vec2 PTR, PAN;
 uniform float VX, NS;
 
 /* registry texture — 512x1 RGBA8. 2 texels per node:
-   A: x,y as 16-bit (x/1.2, y/0.8).  B: cls*51, revoked, vacant, -.
+   A: x,y as 16-bit (x/1.2, y/0.8).  B: cls*25 (1..10), revoked, vacant, -.
    texels 256+: edges as node-index pairs (255 = empty). */
 vec4 nTex(int i){ return texture2D(Nodes, vec2((float(i)+.5)/512., .5)); }
 vec2 nPos(vec4 t){
   return vec2((t.r*65280.+t.g*255.)/65535.*1.2,
               (t.b*65280.+t.a*255.)/65535.*.8);
 }
-float nCls(vec4 t){ return floor(t.r*5.+.5); }
+float nCls(vec4 t){ return floor(t.r*255./25.+.5); }
 
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
 float n2(vec2 p){
@@ -428,7 +498,7 @@ void main(){
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
     float cls=nCls(nb);
-    float sz=(.007+cls*.0042)*NZ;
+    float sz=(.007+min(cls,6.)*.0042)*NZ;
     float tw2=.75+.25*sin(T*(1.4+Spike*5.)+float(i)*9.);
     /* class filter — isolate the spectral band */
     float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .10 : 1.;
@@ -440,7 +510,7 @@ void main(){
     if(float(i)==Birth && BirthT<4.){
       lum+=exp(-r*22.)*max(0.,1.6-BirthT*.45);
       lum+=smoothstep(.007,.001,abs(r-BirthT*.14))*max(0.,1.-BirthT*.28);
-      classInk=max(classInk, cls*.2*max(0.,1.2-BirthT*.3));
+      classInk=max(classInk, cls*.1*step(.05,1.2-BirthT*.3));
     }
     /* ignition flare — only while the sweep is passing this star */
     float rec=clamp((Ignite*1.14-.04-ap.x)*9.,0.,1.)*on*step(Ignite,.995);
@@ -450,12 +520,12 @@ void main(){
     float hon=clamp(Net*1.5-float(i)/128.,0.,1.);
     float ring=smoothstep(.0045*zk,.0012*zk,abs(r-(.021+.002*cls)*NZ))*hon*.75*fdim;
     lum+=ring;
-    classInk=max(classInk,(core+glow+ring)*cls*.2);
+    classInk=max(classInk,step(.06,core+glow+ring)*cls*.1);
     /* selected star — the inspector's ring */
     if(float(i)==Sel){
       lum+=smoothstep(.009*zk,.002*zk,abs(r-.042*zk))*(.55+.35*sin(T*5.));
       lum+=smoothstep(.006*zk,.001*zk,abs(r-.055*zk))*(.3+.2*sin(T*5.-1.));
-      classInk=max(classInk,.16);
+      classInk=max(classInk,cls*.1);
     }
     /* revoked stars burn red below the plane, trailing toward it */
     if(nb.g>.5){
@@ -481,7 +551,7 @@ void main(){
     vec2 pp=A+abv*tt;
     float ed=length((puv-pp)*vec2(asp,1.));
     lum+=smoothstep(.0028,.0006,ed)*.32*Net;
-    classInk=max(classInk, smoothstep(.0028,.0006,ed)*Net*(nCls(nTex(ia*2+1))*.08+nCls(nTex(ib*2+1))*.08));
+    classInk=max(classInk, step(.4,smoothstep(.0028,.0006,ed)*Net)*max(nCls(nTex(ia*2+1)),nCls(nTex(ib*2+1)))*.1);
     float slot=floor(T*Spin*2.2);
     if(float(e)==floor(h2(vec2(slot,1.3))*48.) && Net>.4){
       float ft=fract(T*Spin*2.2);
@@ -538,9 +608,19 @@ uniform vec2 R, C;
 uniform float T, Glitch, CellAsp;
 uniform vec3 Decay;
 float h2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+/* class k (1..10) arrives as k/10 in the scene's blue channel */
 vec3 spec(float h){
-  vec3 a=vec3(.6,.82,1.),b=vec3(.55,1.,.9),c=vec3(1.,.98,.9),d=vec3(1.,.7,.35),e=vec3(1.,.42,.18);
-  return h<.3?mix(a,b,h/.3):h<.55?mix(b,c,(h-.3)/.25):h<.8?mix(c,d,(h-.55)/.25):mix(d,e,(h-.8)/.2);
+  float k=floor(h*10.+.5);
+  if(k<=1.) return vec3(.6,.72,1.);
+  if(k<=2.) return vec3(.55,1.,.9);
+  if(k<=3.) return vec3(1.,.98,.9);
+  if(k<=4.) return vec3(1.,.7,.35);
+  if(k<=5.) return vec3(1.,.42,.18);
+  if(k<=6.) return vec3(1.,.24,.43);
+  if(k<=7.) return vec3(.75,.42,1.);
+  if(k<=8.) return vec3(.54,.49,1.);
+  if(k<=9.) return vec3(.37,.66,1.);
+  return vec3(1.);
 }
 void main(){
   vec2 uv = gl_FragCoord.xy / R;
@@ -727,18 +807,33 @@ void main(){
   const labelsEl = document.createElement('div');
   labelsEl.style.cssText = 'position:fixed;inset:0;z-index:5;pointer-events:none';
   document.body.insertBefore(labelsEl, document.querySelector('.hud'));
-  /* class column markers — fixed on the spectral diagonal */
-  const labels = [1, 2, 3, 4, 5].map(c => {
-    const s = document.createElement('span');
-    s.textContent = RN[c - 1];
+  /* class markers — one per band, clickable for the class's criteria */
+  const labels = CLASSES.map((k, idx) => {
+    const c = idx + 1, s = document.createElement('button');
+    s.type = 'button';
+    s.className = 'cls-mark' + (k.reserved ? ' rsv' : '');
+    s.innerHTML = `${k.rn}${k.reserved ? '<small>RESERVED</small>' : ''}`;
+    s.title = `Class ${k.rn} · ${k.name} — criteria`;
     s.dataset.c = c;
-    s.dataset.x = .07 + .84 * [.075, .25, .465, .68, .89][c - 1];
+    s.dataset.x = BX0 + (c - .5) * BW;
     s.dataset.y = EY + .6;
-    s.style.cssText = `position:absolute;left:0;top:0;font-size:10px;letter-spacing:.2em;color:${CLS_HEX[c - 1]};
-      opacity:.75;text-shadow:0 0 8px ${CLS_HEX[c - 1]}66;will-change:transform`;
+    s.style.cssText = `--c:${k.hex}`;
+    s.addEventListener('click', () => openClassInfo(c));
     labelsEl.appendChild(s);
     return s;
   });
+  /* the reserved region: dashed band edges, and the end of the scale */
+  const bandEdges = [ACTIVE, ACTIVE + 1, ACTIVE + 2, NCLS].map(k => {
+    const d = document.createElement('div');
+    d.className = 'band-edge' + (k === NCLS ? ' end' : '');
+    d.dataset.x = BX0 + k * BW;
+    labelsEl.appendChild(d);
+    return d;
+  });
+  const beyond = document.createElement('span');
+  beyond.className = 'beyond';
+  beyond.textContent = 'BEYOND THE SCALE · UNCLASSIFIED';
+  labelsEl.appendChild(beyond);
 
   /* axis captions — what the two dimensions of the sky mean */
   const axes = [
@@ -832,7 +927,7 @@ void main(){
     const live = AGENTS.filter(a => a.used);
     if (!live.length || userCam) return;
     const xs = live.map(a => a.x), ys = live.map(a => a.y);
-    const x0 = Math.min(...xs, .03), x1 = Math.max(...xs, .92), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .62);
+    const x0 = Math.min(...xs, BX0 - .01), x1 = Math.max(...xs, BX0 + NCLS * BW + .01), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .62);
     const topH = document.querySelector('.top').getBoundingClientRect().bottom;
     let L = 24, R = 24, B = mobile ? 70 : 40;
     const T = topH + 24;
@@ -1037,15 +1132,42 @@ void main(){
         out.push({ ds: String(ds).replace(/^(super_glue|glue),?/i, '').slice(0, 26), metric: String(mt.name || mt.type || 'score').slice(0, 18), value: v });
       }
     }
-    return out.slice(0, 9);
+    return out;
   }
-  async function enrichBench(a) {
-    if (a.bench !== undefined) return;
+  /* The model card, read once per model on inspect: self-reported benchmarks,
+     the exact parameter count, and the training-token count the card states.
+     Classes VI and VII need this evidence, so the model is re-classified with
+     it — and moves to its new band if the class changes. */
+  async function enrichCard(a) {
+    if (a.bench !== undefined) return false;
     a.bench = null;
+    const name = a.name;
     try {
-      const r = await fetch(`https://huggingface.co/api/models/${a.name}?full=true`);
-      a.bench = extractBenchmarks(await r.json());
-    } catch { }
+      const api = `https://huggingface.co/api/models/${name}?expand[]=cardData&expand[]=safetensors&expand[]=tags&expand[]=gated&expand[]=pipeline_tag&expand[]=downloads&expand[]=likes&expand[]=config`;
+      const [mr, readme] = await Promise.all([
+        fetch(api).then(r => r.ok ? r.json() : null),
+        a.gated ? Promise.resolve('') : fetch(`https://huggingface.co/${name}/raw/main/README.md`).then(r => r.ok ? r.text() : '').catch(() => ''),
+      ]);
+      if (!mr || a.name !== name) return false;
+      const bench = extractBenchmarks(mr);
+      a.bench = bench.slice(0, 9);
+      const tm = readme.match(TOKENS_RE);
+      const am = readme.match(ACTIVE_RE);
+      const card = { bench, tokensT: tm ? +tm[1] : 0, activeB: am ? +am[1] : 0 };
+      if (tm) a.tokenQuote = readme.slice(Math.max(0, tm.index - 60), tm.index + tm[0].length + 20).replace(/\s+/g, ' ').trim();
+      const rec = { m: { ...mr, id: name }, ...classifyModel({ ...mr, id: name }, card), downloads: a.downloads };
+      const moved = rec.cls !== a.cls;
+      a.steps = rec.steps; a.score = rec.score; a.flops = rec.flops;
+      if (moved) {
+        a.cls = rec.cls;
+        a.x = bandX(rec.cls, bandFrac(rec)) + (fr(a.i * 7.13 + .13) - .5) * .02;
+        birthIdx = a.i; birthT = 0;
+        const c = census.find(r => r.m.id === name);
+        if (c) Object.assign(c, { cls: rec.cls, steps: rec.steps, flops: rec.flops });
+        refresh();
+      }
+      return moved;
+    } catch { return false; }
   }
   function openInspector(i) {
     const a = AGENTS[i];
@@ -1066,13 +1188,16 @@ void main(){
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
       `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
       `<div class="in-sec">CLASSIFICATION EVIDENCE</div>` +
-      `<div class="in-ev">${(a.steps || []).join('<br>') || '—'}</div>` +
+      `<div class="in-ev" id="in-ev">${(a.steps || []).map(esc).join('<br>') || '—'}</div>` +
       `<div class="in-sec">BENCHMARKS — SELF-REPORTED</div>` +
       `<div class="in-bench" id="in-bench">${a.bench === null ? '—' : 'loading…'}</div>`;
     $('in-body').innerHTML = body;
     $('in-dl').onclick = () => toggleFiles(a);
-    if (a.bench === undefined) enrichBench(a).then(() => {
-      if (selIdx === a.i) $('in-bench').innerHTML = a.bench && a.bench.length
+    if (a.bench === undefined) enrichCard(a).then(moved => {
+      if (selIdx !== a.i) return;
+      if (moved) { openInspector(a.i); return; }
+      $('in-ev').innerHTML = (a.steps || []).map(esc).join('<br>');
+      $('in-bench').innerHTML = a.bench && a.bench.length
         ? a.bench.map(b2 => `<div class="in-row"><span>${b2.ds}</span><b>${b2.value}</b></div>`).join('')
         : 'none declared on model card';
     });
@@ -1081,6 +1206,30 @@ void main(){
       : 'none declared on model card';
   }
   function closeInspector() { insp.style.display = 'none'; }
+
+  /* a class's own card: what puts a model in it, what counts as evidence, who's there */
+  function openClassInfo(c) {
+    const k = CLASSES[c - 1];
+    select(-1);
+    setSheet(null);
+    const members = AGENTS.filter(a => a.used && a.cls === c);
+    const entries = register.filter(e => e.class === c);
+    insp.style.display = 'block';
+    $('in-name').textContent = `CLASS ${k.rn} · ${k.name}`;
+    $('in-cls').textContent = k.reserved
+      ? (members.length || entries.length ? 'RESERVED — OCCUPIED' : 'RESERVED — NO KNOWN ENTITY')
+      : `${members.length} ON THE MAP · FROM ${k.basis.toUpperCase()}`;
+    $('in-cls').style.color = k.hex;
+    $('in-body').innerHTML =
+      `<div class="in-sec">CRITERION</div><div class="in-ev">${esc(k.test)}</div>` +
+      (k.evidence ? `<div class="in-sec">EVIDENCE THAT COUNTS</div><div class="in-ev">${esc(k.evidence)}</div>` : '') +
+      (k.reserved ? `<div class="in-note">This band is defined in advance and stays empty until a sourced claim places a model here. An empty band is not a prediction that any model will reach it.</div>` : '') +
+      `<div class="in-sec">EVIDENCE REGISTER</div>` +
+      (entries.length
+        ? entries.map(e => `<div class="in-ev"><b>${esc(e.models.join(', '))}</b><br>“${esc(e.quote)}”<br><a class="in-src" href="${esc(e.source)}" target="_blank" rel="noopener">${esc(e.publisher)} · ${esc(e.date)} ↗</a></div>`).join('')
+        : `<div class="in-note">none</div>`) +
+      (members.length && !k.reserved ? `<div class="in-sec">ON THE MAP</div><div class="in-ev">${members.slice(0, 12).map(a => esc(a.name.split('/').pop())).join(' · ')}${members.length > 12 ? ` · +${members.length - 12}` : ''}</div>` : '');
+  }
 
   /* ---- weights — the repo's real file tree: sizes, LFS sha256, direct downloads ---- */
   const fmtBytes = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : n >= 1e3 ? (n / 1e3).toFixed(0) + ' kB' : n + ' B';
@@ -1177,10 +1326,13 @@ void main(){
 
   /* legend class filter */
   let filterCls = 0;
+  $('lg-rows').innerHTML = CLASSES.map((k, i) =>
+    `<div class="lg-row${k.reserved ? ' rsv' : ''}" data-c="${i + 1}"><i style="--c:${k.hex}"></i>${k.rn} · ${k.name}<span class="n"></span></div>`).join('');
   $('legend').addEventListener('click', e => {
     const row = e.target.closest('.lg-row');
     if (!row) return;
     const c = +row.dataset.c;
+    if (CLASSES[c - 1].reserved) { openClassInfo(c); return; }
     filterCls = filterCls === c ? 0 : c;
     [...$('legend').querySelectorAll('.lg-row')].forEach(r =>
       r.classList.toggle('off', filterCls && +r.dataset.c !== filterCls));
@@ -1201,7 +1353,7 @@ void main(){
       const y16 = Math.min(65535, Math.max(0, Math.round(a.y / .8 * 65535)));
       nodeData[o] = x16 >> 8; nodeData[o + 1] = x16 & 255;
       nodeData[o + 2] = y16 >> 8; nodeData[o + 3] = y16 & 255;
-      nodeData[o + 4] = Math.round((a.cls || 1) * 51);
+      nodeData[o + 4] = Math.round((a.cls || 1) * 25);
       nodeData[o + 5] = a.used && a.revoked ? 255 : 0;
       nodeData[o + 6] = a.used ? 0 : 255;
       nodeData[o + 7] = 0;
@@ -1241,7 +1393,8 @@ void main(){
     $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
     document.querySelectorAll('#legend .lg-row .n').forEach(n => {
       const c = +n.closest('.lg-row').dataset.c;
-      n.textContent = '×' + AGENTS.filter(a => a.used && a.cls === c).length;
+      const k = AGENTS.filter(a => a.used && a.cls === c).length;
+      n.textContent = CLASSES[c - 1].reserved && !k ? 'reserved' : '×' + k;
     });
   }
   syncStars();
@@ -1359,7 +1512,13 @@ void main(){
       const c = +s.dataset.c;
       const [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
       s.style.transform = `translate(${x}px,${y}px) translate(-50%,-190%)`;
-      s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
+      s.style.opacity = !glOK ? 0 : filterCls && c !== filterCls ? .12 : 1;
+    }
+    for (const d of bandEdges) d.style.transform = `translateX(${toScreen(+d.dataset.x, 0)[0]}px)`;
+    {
+      const [bx, by] = toScreen(BX0 + NCLS * BW + .006, EY + .3);
+      beyond.style.transform = `translate(${bx}px,${by}px) rotate(-90deg)`;
+      beyond.style.opacity = glOK ? .55 : 0;
     }
     for (const s of axes) {
       let [x, y] = toScreen(+s.dataset.x, +s.dataset.y);

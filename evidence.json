@@ -1,0 +1,19 @@
+{
+  "about": "Sourced claims that place a model in a class metadata can't establish (VII-X). Each entry: the models it covers, the class, the publisher's own words, the source and its date. A model enters VIII, IX or X only through an entry here.",
+  "entries": [
+    {
+      "models": [
+        "meta-llama/Llama-3.1-405B",
+        "meta-llama/Llama-3.1-405B-FP8",
+        "meta-llama/Llama-3.1-405B-Instruct",
+        "meta-llama/Llama-3.1-405B-Instruct-FP8"
+      ],
+      "class": 7,
+      "claim": "Pre-training compute above the EU AI Act's 10^25 FLOP presumption threshold (the Instruct and FP8 releases are derived from this pre-trained model).",
+      "quote": "our flagship language model was pre-trained using 3.8 × 10^25 FLOPs",
+      "source": "https://arxiv.org/abs/2407.21783",
+      "publisher": "Meta — The Llama 3 Herd of Models",
+      "date": "2024-07-31"
+    }
+  ]
+}

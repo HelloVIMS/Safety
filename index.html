@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="console.css?v=3">
+  <link rel="stylesheet" href="console.css?v=4">
 </head>
 <body>
 
@@ -40,12 +40,8 @@
 
     <div class="legend" id="legend">
       <div class="lg-h card-h"><span>RISK CLASS — SPECTRAL TYPE</span><button class="card-min" aria-label="collapse">–</button></div>
-      <div class="lg-row" data-c="1"><i style="--c:#9ab8ff"></i>I · INERT<span class="n">×3</span></div>
-      <div class="lg-row" data-c="2"><i style="--c:#8cffe6"></i>II · STATELESS<span class="n">×3</span></div>
-      <div class="lg-row" data-c="3"><i style="--c:#fffae6"></i>III · STATEFUL<span class="n">×3</span></div>
-      <div class="lg-row" data-c="4"><i style="--c:#ffb359"></i>IV · SIDE-EFFECTING<span class="n">×3</span></div>
-      <div class="lg-row" data-c="5"><i style="--c:#ff6b2e"></i>V · PRIVILEGED<span class="n">×3</span></div>
-      <div class="lg-note">CLASSIFICATION IS A PURE FUNCTION<br>OF THE CAPABILITY MANIFEST.<br>SELECT A CLASS TO ISOLATE.</div>
+      <div id="lg-rows"></div>
+      <div class="lg-note">I–V FROM METADATA · VI–VII FROM CARD EVIDENCE<br>VIII–X RESERVED — EMPTY UNTIL EVIDENCE EXISTS<br>SELECT A CLASS TO ISOLATE · MARKERS SHOW CRITERIA</div>
     </div>
 
     <div class="roster" data-resize>
@@ -67,6 +63,6 @@
     </nav>
   </div>
 
-  <script src="map.js?v=3"></script>
+  <script src="map.js?v=4"></script>
 </body>
 </html>

@@ -294,3 +294,20 @@ html,body{overscroll-behavior:none;height:100%}
 .in-deploy{display:block;text-align:center;margin:8px 0 4px;background:rgba(255,179,71,.1);border:1px solid rgba(255,179,71,.55);
   color:var(--gold);font-size:10px;font-weight:700;letter-spacing:.2em;padding:9px 10px}
 .in-deploy:hover{background:rgba(255,179,71,.2);color:var(--bone)}
+
+/* ---------- ten-class scale ---------- */
+.cls-mark{position:absolute;left:0;top:0;background:none;border:none;cursor:pointer;pointer-events:auto;
+  font:inherit;font-size:10.5px;letter-spacing:.2em;color:var(--c);text-shadow:0 0 8px color-mix(in srgb,var(--c) 40%,transparent);
+  padding:3px 4px;line-height:1.2;display:flex;flex-direction:column;align-items:center;will-change:transform}
+.cls-mark:hover{text-shadow:0 0 12px var(--c)}
+.cls-mark small{font-size:7px;letter-spacing:.24em;opacity:.7;margin-top:2px}
+.cls-mark.rsv{opacity:.7;font-style:italic}
+.band-edge{position:absolute;left:0;top:0;bottom:0;width:0;border-left:1px dashed rgba(138,125,255,.28);pointer-events:none;will-change:transform}
+.band-edge.end{border-left:1px solid rgba(255,255,255,.22)}
+.beyond{position:absolute;left:0;top:0;font-size:8.5px;letter-spacing:.3em;color:var(--dim);white-space:nowrap;
+  transform-origin:0 0;pointer-events:none;will-change:transform}
+.lg-row.rsv{color:var(--dim);font-style:italic}
+.lg-row.rsv i{background:transparent;border:1px dashed var(--c);box-shadow:none}
+.lg-row.rsv .n{font-style:normal;letter-spacing:.14em}
+.in-src{color:var(--amber);font-size:9.5px;letter-spacing:.1em}
+.in-src:hover{text-decoration:underline}

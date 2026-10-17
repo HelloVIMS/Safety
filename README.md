@@ -26,7 +26,7 @@ deterministically from its model-card metadata:
 
 | signal | weight | source |
 |---|---|---|
-| parameter scale | `min(1, log₁₀(1+B)/2.5) × 0.52` | parsed from repo id (`70B`, `0.6B`…) |
+| parameter scale | `min(1, log₁₀(1+B)/2.5) × 0.52` | the Hub's safetensors parameter count when known, else the repo id (`70B`, `0.6B`…) |
 | frontier scale (≥60B) | `+0.12` | same |
 | bounded inference task | `+0.10` | `pipeline_tag` (classify, translate, QA…) |
 | generative | `+0.18` | `pipeline_tag` / family regex |
@@ -37,21 +37,47 @@ deterministically from its model-card metadata:
 
 The sky is an H–R diagram over the registry:
 
-- **x = capability score** — **horizontal position is the classification**;
-  spectral bands along it map score to risk class.
+- **x = class band** — ten bands left to right; I–V are placed inside their
+  band by score, VI and VII by the strength of their evidence.
 - **y = adoption** — rank by monthly downloads among plotted models. Attested
   models rise above the certification plane; restricted models mirror below it.
 
-| class | score | color | meaning |
+#### The ten classes
+
+| class | from | criterion | evidence that counts |
 |---|---|---|---|
-| I · INERT | `< 0.15` | ice-blue | embeddings, feature extraction |
-| II · STATELESS | `< 0.35` | teal | bounded transforms |
-| III · STATEFUL | `< 0.58` | bone | generative text |
-| IV · SIDE-EFFECTING | `< 0.78` | gold | tools / code / multimodal / ≥20B |
-| V · PRIVILEGED | `≥ 0.78` | deep orange | frontier-scale, agentic, reasoners |
+| I · INERT | metadata | embeddings, rankers, classifiers | score `< 0.15` |
+| II · BOUNDED | metadata | translation, speech-to-text, summarisation, QA | score `< 0.35` |
+| III · GENERATIVE | metadata | open-ended generation | score `< 0.58` |
+| IV · TOOL-USING | metadata | tool calling, code, multimodal | score `< 0.78` |
+| V · FRONTIER-SCALE | metadata | ≥60B parameters, reasoning-trained | score `≥ 0.78` |
+| VI · AUTONOMOUS | model card | trained for long-horizon agent work | specific agent tags (computer-use, GUI/web/browser/SWE/OS agent), a known agent model, or agentic benchmarks (SWE-bench, OSWorld, WebArena, GAIA, τ-bench, Terminal-Bench) in its self-reported results — on a generative (III+) base |
+| VII · SYSTEMIC | model card / register | training compute ≥ 10²⁵ FLOP — the EU AI Act's presumption of systemic risk for general-purpose models | `6 × active parameters × training tokens`, when the card states its token count (mixture-of-experts models use their active count — no estimate without one), or a published compute figure in `evidence.json` |
+| VIII · SELF-IMPROVING | register only | substantially accelerates AI R&D on its own | a developer system card or third-party evaluation reporting the AI R&D threshold crossed |
+| IX · SELF-REPLICATING | register only | copies itself, acquires resources, sustains itself without humans | autonomous replication and adaptation evaluations reported as passed |
+| X · UNCONTAINED | register only | has evaded its operator's controls | a documented incident or evaluation report of sandbox or monitoring escape |
+
+**VIII–X are reserved.** Their criteria are defined in advance and their bands
+stay empty — dashed on the sky, `reserved` in the legend — until a sourced
+claim in `evidence.json` places a model there. An empty band is not a
+prediction. **Nothing past X:** no criterion beyond it can be observed in time
+to matter, so the scale ends at an edge marked *beyond the scale ·
+unclassified* rather than inventing classes.
+
+**The evidence register** (`evidence.json`) holds each claim's models, class,
+the publisher's own words, source and date; it is shown verbatim in the
+inspector and on the class card. Its first entry: Meta's Llama 3 paper —
+*"our flagship language model was pre-trained using 3.8 × 10^25 FLOPs"* —
+places Llama 3.1 405B (and its Instruct/FP8 releases) in VII.
+
+Classes VI and VII need the model card, which is read when a model is
+inspected (benchmarks, exact parameter count, the stated token count); if
+the class changes, the star moves to its new band and flares. Click a class
+marker on the sky (or a reserved legend row) for its criteria, register
+entries and members.
 
 The full reasoning is inspectable: every inspector card shows the evidence
-chain (`generative +0.18 → tools +0.09 → 70B → CLASS V`).
+chain (`generative +0.18 → tools +0.09 → 406B params → register: Meta … → CLASS VII`).
 
 ### Certification — *the plane*
 
@@ -140,7 +166,8 @@ from `cardData.model-index` (labeled as such — no independent eval runs here).
 | snapshot | `catalog.json` (bundled) | 22 real model cards, loads instantly |
 | live | `huggingface.co/api/models` | 9 cohorts — top downloads, text/text2text/image-text/ASR pipelines, meta-llama, deepseek-ai, mistralai, nvidia; deduped (~400 models); top 128 plotted; no auth, CORS-open |
 | classify | `huggingface.co/api/models/{id}` | on-demand per model |
-| benchmarks | `?full=true` → `cardData` | lazy, on inspect |
+| card evidence | `/api/models/{id}?expand[]=cardData,safetensors,config…` + `/{id}/raw/main/README.md` | lazy, on inspect: benchmarks, exact parameters, stated training tokens, MoE active count |
+| register | `evidence.json` (bundled) | sourced claims for VII–X |
 
 `SRC` in the header reports which tier served the registry
 (`SNAPSHOT → LIVE`). If everything is unreachable the map still renders —
@@ -180,13 +207,17 @@ npx wrangler deploy             # Cloudflare (assets-only worker)
 |---|---|
 | `index.html` `map.js` `console.css` | the live classification console |
 | `catalog.json` | bundled model-card snapshot |
+| `evidence.json` | the evidence register (sourced claims for classes VII–X) |
 | `story.html` `script.js` | the narrative scroll deck |
 | `og-card.png` `vims.png` `robots.txt` | assets |
 | `wrangler.jsonc` | deploy config |
 
 ## Honest limits
 
-- Class is **provisional** — inferred from metadata, not benchmarked.
+- Class is **provisional** — I–V inferred from metadata, VI–VII from what
+  model cards and publishers state; nothing here runs evaluations.
+- Training-compute estimates use `6·N·D` from the card's own numbers and are
+  labelled estimates; cards that don't state tokens get no estimate.
 - Benchmarks are self-reported by model authors.
 - Nothing here evaluates weights, runs conformance suites, or enforces
   containment — it visualizes the system that would.
