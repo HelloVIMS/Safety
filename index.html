@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="console.css?v=2">
+  <link rel="stylesheet" href="console.css?v=3">
 </head>
 <body>
 
@@ -23,19 +23,23 @@
       <a class="brand" href="/"><img class="mark" src="/vims.png" alt="vims">safety<span class="dim">.vims</span><span class="dim sub">&nbsp;— CLASSIFICATION MAP</span></a>
       <div class="cx">
         <span class="cx-p">CLASSIFY&nbsp;▸</span>
-        <input id="cx-in" list="cx-list" placeholder="classify a model — owner/name" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" inputmode="url">
-        <datalist id="cx-list"></datalist>
+        <input id="cx-in" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="cx-drop"
+          placeholder="search models" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+        <span class="cx-stat" id="cx-stat" aria-live="polite"></span>
+        <kbd class="cx-k">/</kbd>
+        <div class="cx-drop" id="cx-drop" role="listbox" hidden></div>
       </div>
       <div class="stats">
         <span><b id="st-reg">0</b> REGISTERED</span>
         <span><b id="st-cert">0</b> ATTESTED</span>
         <span class="bad"><b id="st-rev">0</b> RESTRICTED</span>
         <span>SRC <b id="st-src">—</b></span>
+        <button class="fs-btn" id="fs-btn" title="fullscreen (F)" aria-label="toggle fullscreen">⛶</button>
       </div>
     </div>
 
     <div class="legend" id="legend">
-      <div class="lg-h">RISK CLASS — SPECTRAL TYPE</div>
+      <div class="lg-h card-h"><span>RISK CLASS — SPECTRAL TYPE</span><button class="card-min" aria-label="collapse">–</button></div>
       <div class="lg-row" data-c="1"><i style="--c:#9ab8ff"></i>I · INERT<span class="n">×3</span></div>
       <div class="lg-row" data-c="2"><i style="--c:#8cffe6"></i>II · STATELESS<span class="n">×3</span></div>
       <div class="lg-row" data-c="3"><i style="--c:#fffae6"></i>III · STATEFUL<span class="n">×3</span></div>
@@ -44,17 +48,17 @@
       <div class="lg-note">CLASSIFICATION IS A PURE FUNCTION<br>OF THE CAPABILITY MANIFEST.<br>SELECT A CLASS TO ISOLATE.</div>
     </div>
 
-    <div class="roster">
-      <div class="ro-h">MODEL REGISTRY</div>
+    <div class="roster" data-resize>
+      <div class="ro-h card-h"><span>REGISTRY · ON MAP</span><button class="card-min" aria-label="collapse">–</button></div>
       <div class="ro-list" id="roster"></div>
     </div>
 
     <div class="insp" id="insp" style="display:none">
-      <div class="in-h"><span id="in-name">—</span><span id="in-cls"></span><button id="in-x">×</button></div>
+      <div class="in-h card-h"><span id="in-name">—</span><span id="in-cls"></span><button id="in-x">×</button></div>
       <div class="in-body" id="in-body"></div>
     </div>
 
-    <div class="hint">DRAG TO PAN · SCROLL TO ZOOM<br>CLICK A STAR TO INSPECT</div>
+    <div class="hint">DRAG · SCROLL ZOOM · CLICK A STAR<br>DRAG CARD HEADERS · DBL-CLICK RESETS<br>/ SEARCH · F FULLSCREEN · H HIDE PANELS</div>
 
     <nav class="mbar">
       <button data-sheet="roster">REGISTRY</button>
@@ -63,6 +67,6 @@
     </nav>
   </div>
 
-  <script src="map.js?v=2"></script>
+  <script src="map.js?v=3"></script>
 </body>
 </html>

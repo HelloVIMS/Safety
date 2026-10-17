@@ -191,3 +191,75 @@ html,body{overscroll-behavior:none;height:100%}
   .nogl .roster{display:flex;max-height:none;top:120px}
 }
 @keyframes sheet{from{transform:translateY(24px);opacity:0}}
+
+/* ---------- floating cards ---------- */
+.card-h{display:flex;align-items:center;gap:10px;cursor:grab;user-select:none;touch-action:none}
+.card-h > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dragging .card-h{cursor:grabbing}
+.dragging{box-shadow:0 0 0 1px rgba(63,217,178,.45),0 18px 50px rgba(0,0,0,.7)!important;opacity:.96}
+.card-min{background:none;border:1px solid var(--line);color:var(--dim);font:inherit;font-size:11px;
+  line-height:1;width:20px;height:18px;cursor:pointer;flex:none}
+.card-min:hover{color:var(--amber);border-color:var(--amber)}
+.legend .lg-h{margin-bottom:12px}
+.roster .ro-list{max-height:none;flex:1;min-height:0}
+@media (min-width:901px) and (pointer:fine){
+  .legend{top:auto;bottom:28px;transform:none}
+  .roster{bottom:96px;resize:vertical;min-height:90px;max-height:calc(100vh - 20px)}
+  .insp{left:auto;right:280px;top:64px;max-height:calc(100vh - 90px)}
+  .collapsed{resize:none!important;height:auto!important;min-height:0!important;bottom:auto!important}
+  .legend.collapsed .lg-row,.legend.collapsed .lg-note,.roster.collapsed .ro-list{display:none}
+  .legend.collapsed .lg-h{margin-bottom:0}
+}
+.bare .legend,.bare .roster,.bare .hint{display:none!important}
+.hint{pointer-events:none}
+
+/* ---------- fullscreen ---------- */
+.fs-btn{background:none;border:1px solid var(--line);color:var(--dim);font:inherit;font-size:13px;
+  line-height:1;padding:3px 7px;cursor:pointer;margin-left:4px}
+.fs-btn:hover,.fs-btn.on{color:var(--amber);border-color:var(--amber)}
+.stats{align-items:center}
+
+/* ---------- search ---------- */
+.cx{position:relative}
+.cx input{flex:1;min-width:0;width:auto}
+.cx-stat{font-size:9px;letter-spacing:.14em;color:var(--dim);white-space:nowrap;max-width:200px;
+  overflow:hidden;text-overflow:ellipsis}
+.cx-stat.ok{color:var(--amber)}.cx-stat.bad{color:var(--red)}
+.cx-stat.busy{color:var(--gold);animation:pulse 1s ease-in-out infinite}
+.cx-k{font:inherit;font-size:9px;color:var(--dim);border:1px solid var(--line);padding:0 5px;border-radius:2px}
+.cx:focus-within .cx-k{display:none}
+.cx-drop{position:absolute;left:-1px;right:-1px;top:calc(100% + 6px);max-height:min(60vh,440px);overflow-y:auto;
+  background:rgba(2,8,7,.97);border:1px solid rgba(63,217,178,.35);backdrop-filter:blur(10px);
+  box-shadow:0 18px 50px rgba(0,0,0,.7);z-index:40;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.cx-sec{padding:8px 12px 4px;font-size:8.5px;letter-spacing:.3em;color:var(--dim);
+  border-top:1px solid var(--line)}
+.cx-sec:first-child{border-top:none}
+.cx-row{display:flex;align-items:center;gap:10px;padding:7px 12px;cursor:pointer;font-size:10.5px;letter-spacing:.04em}
+.cx-row.on{background:rgba(63,217,178,.12);box-shadow:inset 2px 0 0 var(--amber)}
+.cx-c{font-style:normal;font-size:9px;font-weight:700;color:var(--c);width:30px;flex:none;text-align:center;
+  border:1px solid color-mix(in srgb,var(--c) 45%,transparent);padding:1px 0}
+.cx-c.bad{border-style:dashed;color:var(--red);border-color:rgba(255,48,64,.6)}
+.cx-id{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.cx-id b{color:var(--amber);font-weight:700}
+.cx-m{font-size:8.5px;letter-spacing:.14em;color:var(--dim);white-space:nowrap}
+.cx-exact{color:var(--dim)}.cx-exact b{color:var(--bone)}
+
+@media (max-width:900px),(pointer:coarse){
+  .cx-k,.fs-btn{display:none}
+  .cx-stat{max-width:110px}
+  .cx-drop{max-height:50vh}
+  .cx-row{padding:11px 12px;font-size:11.5px}
+  .card-h{cursor:default}
+  .card-min{display:none}
+  .legend{bottom:calc(46px + env(safe-area-inset-bottom))}
+}
+.in-h{display:grid;grid-template-columns:1fr auto;column-gap:10px;row-gap:4px;align-items:start}
+.in-h #in-name{grid-column:1;grid-row:1;white-space:normal;word-break:break-all;line-height:1.4}
+.in-h button{grid-column:2;grid-row:1}
+.in-h #in-cls{grid-column:1 / -1;grid-row:2}
+.cx{min-width:0;max-width:100%}
+@media (max-width:900px),(pointer:coarse){
+  .cx:focus-within .cx-stat:not(.busy):not(.bad){display:none}
+  .cx-m{max-width:28vw;overflow:hidden;text-overflow:ellipsis}
+}
+.cx-stat.bad{max-width:140px}

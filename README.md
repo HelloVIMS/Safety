@@ -89,10 +89,30 @@ attestation.
 | scroll / pinch | zoom about the cursor or pinch midpoint (0.5×–4×) |
 | click / tap a star | open the inspector; touch uses a larger hit radius |
 | click a roster row | open + fly the camera to the star |
-| `/` | focus the classify bar |
-| `Esc` | dismiss inspector / blur |
+| `/` | focus search |
+| `↑` `↓` `Enter` | move through results / choose |
+| `Esc` | clear search · dismiss inspector |
+| `F` / `⛶` | fullscreen |
+| `H` | hide all panels — bare map |
+| drag a card header | move legend / registry / inspector anywhere |
+| `–` on a card | collapse it · drag the registry's corner to resize |
+| double-click a header | reset that card's position |
 | click a legend class | isolate that spectral band |
-| `CLASSIFY ▸ owner/model` | fetch + classify any hub model, live |
+| `CLASSIFY ▸` search | see below |
+
+**Search.** Typing matches instantly against the whole ingested census
+(~400 models, not just the 128 plotted), ranked exact → name prefix → id
+prefix → substring → all tokens, then by downloads. A debounced Hub search
+fills a second section; every hit shows its provisional class *before* you
+pick it, plus where it lives (`ON MAP` / `INDEXED` / `HUB`). Choosing a
+result flies to the star — placing it first if needed (evicting the
+least-downloaded star on the same side of the plane). Hub picks and typed
+`owner/model` ids or hub URLs fetch the full model card first, so `gated`
+and the manifest hash come from the authoritative record. Unknown ids
+report `✗ not found` inline.
+
+Card positions, collapsed state and registry height persist in
+`localStorage`.
 
 **Mobile:** the header collapses to brand / classify / stats; `REGISTRY` and
 `CLASSES` in the bottom bar open the roster and legend as sheets, and the

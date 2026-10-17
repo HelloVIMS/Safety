@@ -55,8 +55,14 @@
     a.source = 'huggingface'; a.steps = mo.steps;
     a.license = (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
     a.why = mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
-    a.hash = '…';
-    manifestHash(mo.m).then(h => { a.hash = h.slice(0, 8); });
+    a.hash = '';
+    const name = a.name;
+    manifestHash(mo.m).then(h => {
+      if (a.name !== name) return;
+      a.hash = h.slice(0, 16);
+      const cell = selIdx === i && document.getElementById('in-hash');
+      if (cell) cell.textContent = a.hash + '…';
+    });
   }
 
   /* ============ REGISTRY SOURCE — Hugging Face Hub ============
@@ -100,7 +106,10 @@
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
+  /* every ingested record — plotted or not — is searchable */
+  let census = [];
   function fillRegistry(recs) {
+    census = recs;
     registryTotal = recs.length;
     AGENTS.forEach(a => { a.used = false; });
     const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
@@ -113,6 +122,7 @@
     for (const mo of bad.slice(0, 4)) { if (i >= 128) break; placeModel(mo, i++); }
     refresh();
     fitView();
+    if (!cxStat.classList.contains('ok')) idleStatus();
   }
 
   async function loadRegistry() {
@@ -154,52 +164,174 @@
     } catch { }
   }
 
-  /* ============ interactive classification ============
-     User submits owner/repo → fetch card → classify → drop on the map
-     with a birth flare + evidence trail. The system does the classifying. */
-  const cxIn = $('cx-in'), cxList = $('cx-list');
+  /* ============ search + classify ============
+     Local tier: instant match over the whole ingested census.
+     Hub tier: debounced search, each hit pre-classified from its metadata.
+     Choosing a result flies to its star — placing it on the map first if needed. */
+  const cxIn = $('cx-in'), cxDrop = $('cx-drop'), cxStat = $('cx-stat');
   let birthIdx = -1, birthT = 99;
-  async function classifyQuery(q) {
-    q = q.trim().replace(/^https?:\/\/(www\.)?huggingface\.co\//i, '').replace(/\/+$/, '').split('?')[0];
-    cxIn.disabled = true;
-    cxIn.value = q;
-    let m;
-    try {
-      const r = await fetch(`https://huggingface.co/api/models/${q}`);
-      if (!r.ok) throw new Error(r.status);
-      m = await r.json();
-    } catch {
-      cxIn.value = ''; cxIn.placeholder = '✗ not found on huggingface.co';
-      cxIn.disabled = false; cxIn.focus();
-      return;
-    }
-    const { cls, unsafe, steps, score } = classifyModel(m);
-    const rec = { m, cls, unsafe, steps, score, downloads: m.downloads || 0 };
-    /* prefer a vacant slot; else evict the least-downloaded of the same kind */
-    let slot = AGENTS.find(a => !a.used);
-    if (!slot) slot = AGENTS.filter(a => a.revoked === unsafe).sort((x, y) => (x.downloads || 0) - (y.downloads || 0))[0];
-    placeModel(rec, slot.i);
-    birthIdx = slot.i; birthT = 0;
-    refresh(); select(slot.i, true);
-    cxIn.value = ''; cxIn.placeholder = `${m.id.split('/')[1]} → CLASS ${RN[cls - 1]}${unsafe ? ' · RESTRICTED' : ''}`;
-    cxIn.disabled = false;
+  const esc = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const normId = q => q.trim().replace(/^https?:\/\/(www\.)?huggingface\.co\//i, '').replace(/\/+$/, '').split(/[?#]/)[0];
+  const slotOf = id => { const a = AGENTS.find(x => x.used && x.name === id); return a ? a.i : -1; };
+  const toRec = m => ({ m, ...classifyModel(m), downloads: m.downloads || 0 });
+
+  let statT = 0;
+  function status(txt, kind) {
+    clearTimeout(statT);
+    cxStat.textContent = txt;
+    cxStat.className = 'cx-stat' + (kind ? ' ' + kind : '');
+    if (kind === 'ok') statT = setTimeout(() => idleStatus(), 5000);
   }
-  cxIn.addEventListener('keydown', e => { if (e.key === 'Enter' && cxIn.value.trim()) classifyQuery(cxIn.value); });
-  addEventListener('keydown', e => {
-    if (e.key === '/' && document.activeElement !== cxIn) { e.preventDefault(); cxIn.focus(); }
-    if (e.key === 'Escape') { select(-1); setSheet(null); cxIn.blur(); }
-  });
-  let cxT;
-  cxIn.addEventListener('input', () => {
-    clearTimeout(cxT);
-    const q = cxIn.value.trim();
-    if (q.length < 3) return;
-    cxT = setTimeout(async () => {
+  const idleStatus = () => status(registryTotal ? `${registryTotal} indexed` : '');
+
+  /* plot a record (evicting the least-adopted star of the same plane if full) and fly to it */
+  function addToMap(rec) {
+    let i = slotOf(rec.m.id);
+    if (i < 0) {
+      const slot = AGENTS.find(a => !a.used) ||
+        AGENTS.filter(a => a.revoked === rec.unsafe && a.i !== selIdx).sort((x, y) => x.downloads - y.downloads)[0];
+      placeModel(rec, slot.i);
+      i = slot.i; birthIdx = i; birthT = 0;
+      if (!census.some(r => r.m.id === rec.m.id)) { census.push(rec); registryTotal = census.length; }
+      refresh();
+    }
+    select(i, true);
+    status(`✓ CLASS ${RN[rec.cls - 1]}${rec.unsafe ? ' · RESTRICTED' : ''}`, 'ok');
+    return i;
+  }
+
+  /* authoritative path — full model card (gated flag, sha) before classifying */
+  async function classifyId(raw) {
+    const id = normId(raw);
+    if (!id) return;
+    const known = slotOf(id);
+    if (known >= 0) { addToMap(census.find(r => r.m.id === id) || { m: { id }, cls: AGENTS[known].cls, unsafe: AGENTS[known].revoked }); return; }
+    status('classifying…', 'busy');
+    try {
+      const r = await fetch(`https://huggingface.co/api/models/${id}`);
+      if (!r.ok) throw new Error(r.status === 404 || r.status === 401 ? 'not found' : `hub ${r.status}`);
+      addToMap(toRec(await r.json()));
+      closeDrop(); cxIn.value = ''; cxIn.blur();
+    } catch (e) {
+      status(`✗ ${e.message === 'Failed to fetch' ? 'hub unreachable' : e.message}`, 'bad');
+    }
+  }
+
+  function matchScore(id, q, toks) {
+    const l = id.toLowerCase(), n = l.slice(l.indexOf('/') + 1);
+    if (l === q || n === q) return 5;
+    if (n.startsWith(q)) return 4;
+    if (l.startsWith(q)) return 3.5;
+    if (l.includes(q)) return 3;
+    return toks.every(t => l.includes(t)) ? 2 : 0;
+  }
+  function hl(id, q) {
+    const k = id.toLowerCase().indexOf(q);
+    return k < 0 ? esc(id) : esc(id.slice(0, k)) + '<b>' + esc(id.slice(k, k + q.length)) + '</b>' + esc(id.slice(k + q.length));
+  }
+
+  let results = [], active = -1, hubAbort = null, hubT = 0, lastQ = '';
+  function render() {
+    const q = lastQ;
+    if (!q) { closeDrop(); return; }
+    const row = (r, k) => {
+      const c = r.rec.cls, plotted = slotOf(r.rec.m.id) >= 0;
+      const where = plotted ? 'ON MAP' : r.src === 'hub' ? 'HUB' : 'INDEXED';
+      return `<div class="cx-row${k === active ? ' on' : ''}" role="option" id="cx-o${k}" data-k="${k}" aria-selected="${k === active}">` +
+        `<i class="cx-c${r.rec.unsafe ? ' bad' : ''}" style="--c:${CLS_HEX[c - 1]}">${RN[c - 1]}</i>` +
+        `<span class="cx-id">${hl(r.rec.m.id, q)}</span>` +
+        `<span class="cx-m">${fmtDl(r.rec.downloads)} · ${where}</span></div>`;
+    };
+    let html = '', k = 0;
+    const loc = results.filter(r => r.src !== 'hub'), hub = results.filter(r => r.src === 'hub');
+    if (loc.length) html += `<div class="cx-sec">REGISTRY</div>` + loc.map(r => row(r, k++)).join('');
+    html += `<div class="cx-sec">HUB${hubAbort ? ' · searching…' : hub.length ? '' : ' · no further matches'}</div>` + hub.map(r => row(r, k++)).join('');
+    if (/^[\w.-]+\/[\w.-]+$/.test(normId(cxIn.value)) && !results.some(r => r.rec.m.id.toLowerCase() === normId(cxIn.value).toLowerCase()))
+      html += `<div class="cx-row cx-exact${k === active ? ' on' : ''}" role="option" id="cx-o${k}" data-k="${k}">classify <b>${esc(normId(cxIn.value))}</b> by id ↵</div>`;
+    cxDrop.innerHTML = html;
+    cxDrop.hidden = false;
+    cxIn.setAttribute('aria-expanded', 'true');
+    cxIn.setAttribute('aria-activedescendant', active >= 0 ? 'cx-o' + active : '');
+    const on = cxDrop.querySelector('.on');
+    if (on) on.scrollIntoView({ block: 'nearest' });
+  }
+  function closeDrop() {
+    cxDrop.hidden = true; active = -1;
+    cxIn.setAttribute('aria-expanded', 'false');
+    if (hubAbort) { hubAbort.abort(); hubAbort = null; }
+  }
+  const optionCount = () => cxDrop.querySelectorAll('.cx-row').length;
+
+  function search() {
+    const q = normId(cxIn.value).toLowerCase();
+    lastQ = q; active = -1;
+    clearTimeout(hubT);
+    if (hubAbort) { hubAbort.abort(); hubAbort = null; }
+    if (!q) { closeDrop(); idleStatus(); return; }
+    const toks = q.split(/[\s/_-]+/).filter(Boolean);
+    results = census.map(rec => ({ rec, sc: matchScore(rec.m.id, q, toks) }))
+      .filter(r => r.sc > 0)
+      .sort((a, b) => b.sc - a.sc || b.rec.downloads - a.rec.downloads)
+      .slice(0, 7).map(r => ({ rec: r.rec, src: 'local' }));
+    if (q.length < 2) { render(); return; }
+    hubAbort = new AbortController();
+    const sig = hubAbort.signal;
+    render();
+    hubT = setTimeout(async () => {
       try {
-        const r = await fetch(`https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=6`);
-        cxList.innerHTML = (await r.json()).map(m => `<option value="${m.id}">`).join('');
-      } catch { }
-    }, 250);
+        const r = await fetch(`https://huggingface.co/api/models?search=${encodeURIComponent(q)}&limit=10&sort=downloads&direction=-1`, { signal: sig });
+        const have = new Set(results.map(x => x.rec.m.id));
+        const hits = (await r.json()).filter(m => m.id && !have.has(m.id)).slice(0, 6).map(m => ({ rec: toRec(m), src: 'hub' }));
+        if (q !== lastQ) return;
+        results = results.filter(x => x.src !== 'hub').concat(hits);
+      } catch (e) { if (e.name === 'AbortError') return; }
+      hubAbort = null;
+      if (q === lastQ && document.activeElement === cxIn) render();
+    }, 220);
+  }
+
+  function choose(k) {
+    const el = cxDrop.querySelector(`[data-k="${k}"]`);
+    if (!el) return;
+    if (el.classList.contains('cx-exact')) { classifyId(cxIn.value); return; }
+    const r = results[k];
+    if (r.src === 'hub') { classifyId(r.rec.m.id); return; }
+    addToMap(r.rec);
+    closeDrop(); cxIn.value = ''; cxIn.blur();
+  }
+
+  cxIn.addEventListener('input', search);
+  cxIn.addEventListener('focus', () => { if (cxIn.value.trim()) search(); else idleStatus(); });
+  cxIn.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== cxIn) closeDrop(); }, 120));
+  cxIn.addEventListener('keydown', e => {
+    const n = optionCount();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!n) return;
+      active = e.key === 'ArrowDown' ? (active + 1) % n : (active <= 0 ? n - 1 : active - 1);
+      render();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (active >= 0) choose(active);
+      else if (results.length && !/\//.test(cxIn.value)) choose(0);
+      else if (cxIn.value.trim()) classifyId(cxIn.value);
+    } else if (e.key === 'Escape') {
+      e.stopPropagation();
+      if (cxIn.value) { cxIn.value = ''; closeDrop(); idleStatus(); } else cxIn.blur();
+    }
+  });
+  cxDrop.addEventListener('pointerdown', e => e.preventDefault());   /* keep input focus */
+  cxDrop.addEventListener('click', e => { const el = e.target.closest('.cx-row'); if (el) choose(+el.dataset.k); });
+  cxDrop.addEventListener('pointermove', e => {
+    const el = e.target.closest('.cx-row');
+    if (el && +el.dataset.k !== active) { active = +el.dataset.k; cxDrop.querySelectorAll('.cx-row').forEach(x => x.classList.toggle('on', x === el)); }
+  });
+  addEventListener('keydown', e => {
+    if (document.activeElement === cxIn) return;
+    if (e.key === '/' ) { e.preventDefault(); cxIn.focus(); }
+    else if (e.key === 'Escape') { select(-1); setSheet(null); }
+    else if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey) toggleFullscreen();
+    else if ((e.key === 'h' || e.key === 'H') && !e.metaKey && !e.ctrlKey) { document.body.classList.toggle('bare'); fitView(); }
   });
 
   /* ============ GLYPH WORLD ============ */
@@ -248,7 +380,7 @@ void main(){
 
   /* ---- the deep field ---- */
   float sh = h2(cell*1.71);
-  float depth = step(Ey,uv.y);
+  float depth = step(Ey,puv.y);
   float density = mix(.012,.030,depth);
   float starOn = step(1.-density*Ignite, sh) * step(puv.x-.015, Ignite);
   float tw = .45+.55*sin(T*(1.2+Spike*7.)+sh*80.);
@@ -258,19 +390,19 @@ void main(){
   lum += starOn*below*.08;
 
   /* ---- the abyss ---- */
-  float ab = smoothstep(Ey,Ey-.3,uv.y);
+  float ab = smoothstep(Ey,Ey-.3,puv.y);
   float mass = fbm2(puv*vec2(5.,2.6)+vec2(T*.06*Spin,0.));
   lum += ab*mass*.07;
   threat += ab*mass*(.07+Threat*.28);
   threat += ab*step(.975,h2(cell+floor(T*6.)))*Threat*.45;
 
   /* ---- the certification plane ---- */
-  float pd = abs(uv.y-Ey);
+  float pd = abs(puv.y-Ey)*Zoom;
   lum += exp(-pd*220.)*1.3*planeOn;
   lum += exp(-pd*60.)*.5*planeOn;
   lum += exp(-pd*16.)*.12*planeOn;
   lum += exp(-pd*42.)*step(.72,h2(vec2(cell.x,floor(T*2.5))))*.35*planeOn;
-  lum += smoothstep(Ey,1.,uv.y)*.05*planeOn;
+  lum += smoothstep(Ey,1.,puv.y)*.05*planeOn;
 
   /* ---- the sweep ---- */
   float sx = Ignite*1.14-.04;
@@ -285,6 +417,7 @@ void main(){
 
   /* ---- the registry ---- */
   float classInk=0.;
+  float zk=pow(Zoom,-.75), NZ=NS*zk;
   for(int i=0;i<128;i++){
     vec4 na=nTex(i*2), nb=nTex(i*2+1);
     if(nb.b>.5) continue;
@@ -294,13 +427,13 @@ void main(){
     vec2 dv=(puv-ap)*vec2(asp,1.);
     float r=length(dv);
     float cls=nCls(nb);
-    float sz=(.007+cls*.0042)*NS;
+    float sz=(.007+cls*.0042)*NZ;
     float tw2=.75+.25*sin(T*(1.4+Spike*5.)+float(i)*9.);
     /* class filter — isolate the spectral band */
     float fdim=(Cls>.5 && abs(cls-Cls)>.4) ? .10 : 1.;
     float rmul=nb.g>.5?.4:1.;
     float core=smoothstep(sz,sz*.3,r)*tw2*on*fdim*rmul*.78;
-    float glow=exp(-r*90./NS)*tw2*on*.55*fdim*rmul;
+    float glow=exp(-r*90./NZ)*tw2*on*.55*fdim*rmul;
     lum+=core+glow;
     /* birth flare — a newly classified star ignites with a shock ring */
     if(float(i)==Birth && BirthT<4.){
@@ -314,19 +447,19 @@ void main(){
     lum+=smoothstep(.004,.0008,abs(r-(1.-rec)*.05))*rec*on*.6;
     /* attestation halo */
     float hon=clamp(Net*1.5-float(i)/128.,0.,1.);
-    float ring=smoothstep(.0045,.0012,abs(r-(.021+.002*cls)*NS))*hon*.75*fdim;
+    float ring=smoothstep(.0045*zk,.0012*zk,abs(r-(.021+.002*cls)*NZ))*hon*.75*fdim;
     lum+=ring;
     classInk=max(classInk,(core+glow+ring)*cls*.2);
     /* selected star — the inspector's ring */
     if(float(i)==Sel){
-      lum+=smoothstep(.009,.002,abs(r-.042))*(.55+.35*sin(T*5.));
-      lum+=smoothstep(.006,.001,abs(r-.055))*(.3+.2*sin(T*5.-1.));
+      lum+=smoothstep(.009*zk,.002*zk,abs(r-.042*zk))*(.55+.35*sin(T*5.));
+      lum+=smoothstep(.006*zk,.001*zk,abs(r-.055*zk))*(.3+.2*sin(T*5.-1.));
       classInk=max(classInk,.16);
     }
     /* revoked stars burn red below the plane, trailing toward it */
     if(nb.g>.5){
       threat+=(core+glow)*.5;
-      threat+=exp(-r*34.)*.22;
+      threat+=exp(-r*34./zk)*.22;
       float ry=clamp((puv.y-ap.y)/max(Ey-ap.y,1e-4),0.,1.);
       float streak=step(0.,ry)*step(ry,1.)*exp(-abs(puv.x-ap.x)*asp*40.);
       lum+=streak*.3;
@@ -609,7 +742,7 @@ void main(){
   /* axis captions — what the two dimensions of the sky mean */
   const axes = [
     ['CAPABILITY SCORE →', .91, EY + .025, 'translate(-100%,-50%)'],
-    ['↑ ADOPTION · download rank', .02, EY + .5, 'translate(0,-50%) rotate(-90deg) translate(0,-100%)'],
+    ['↑ ADOPTION · download rank', .02, EY + .26, 'translate(0,-50%) rotate(-90deg) translate(0,-100%)'],
     ['CERTIFICATION PLANE', .02, EY + .032, 'translate(0,-50%)'],
   ].map(([txt, x, y, tf]) => {
     const s = document.createElement('span');
@@ -688,7 +821,7 @@ void main(){
   function flyTo(i) {
     const a = AGENTS[i];
     if (mobile) zoomT = Math.max(zoomT, 1.5);
-    const ut = mobile ? .5 : .62, vt = mobile ? .74 : .5;
+    const ut = mobile ? .5 : .4, vt = mobile ? .74 : .5;
     panT.x = a.x - .5 - (ut - .5) * VX / zoomT;
     panT.y = a.y - .5 - (vt - .5) / zoomT;
     clampPan();
@@ -700,7 +833,16 @@ void main(){
     const xs = live.map(a => a.x), ys = live.map(a => a.y);
     const x0 = Math.min(...xs, .03), x1 = Math.max(...xs, .92), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .62);
     const topH = document.querySelector('.top').getBoundingClientRect().bottom;
-    const L = mobile ? 14 : 320, R = mobile ? 14 : 280, T = topH + 24, B = mobile ? 70 : 50;
+    let L = 24, R = 24, B = mobile ? 70 : 40;
+    const T = topH + 24;
+    /* tall cards reserve a side; short cards docked low reserve the bottom */
+    if (!mobile && !document.body.classList.contains('bare')) for (const el of [$('legend'), document.querySelector('.roster')]) {
+      const r = el.getBoundingClientRect();
+      if (!r.width) continue;
+      if (r.height >= H * .45) {
+        if (r.left + r.width / 2 < W / 2) L = Math.max(L, r.right + 16); else R = Math.max(R, W - r.left + 16);
+      } else if (r.top > H * .55) B = Math.max(B, H - r.top + 12);
+    }
     const aw = Math.max(80, W - L - R), ah = Math.max(80, H - T - B);
     const z = clamp(Math.min(aw * VX / ((x1 - x0 + .04) * W), ah / ((y1 - y0 + .06) * H)), ZMIN, ZMAX);
     const ax = (L + aw / 2) / W, ay = (T + ah / 2) / H;
@@ -778,6 +920,7 @@ void main(){
     userCam = true;
   }, { passive: false });
 
+  const insp = $('insp');
   /* ---- mobile sheets: registry / classes ---- */
   function setSheet(name) {
     document.body.classList.toggle('sheet-roster', name === 'roster');
@@ -789,8 +932,98 @@ void main(){
     setSheet(document.body.classList.contains('sheet-' + b.dataset.sheet) ? null : b.dataset.sheet);
   }));
 
+  /* ---- floating cards — drag by header, collapse, resize; layout persists ---- */
+  const CARD_KEY = 'safety.vims.cards.v1';
+  let cardState = {};
+  try { cardState = JSON.parse(localStorage.getItem(CARD_KEY)) || {}; } catch { }
+  const saveCards = () => { try { localStorage.setItem(CARD_KEY, JSON.stringify(cardState)); } catch { } };
+  const cards = [];
+  let zTop = 20;
+  function placeCard(el, x, y) {
+    const r = el.getBoundingClientRect();
+    el.style.left = clamp(x, 0, Math.max(0, innerWidth - Math.min(r.width, innerWidth))) + 'px';
+    el.style.top = clamp(y, 0, innerHeight - 34) + 'px';
+    el.style.right = el.style.bottom = 'auto';
+    el.style.transform = 'none';
+  }
+  const resetCard = el => { ['left', 'top', 'right', 'bottom', 'transform', 'height', 'zIndex'].forEach(p => { el.style[p] = ''; }); };
+  function draggable(el, key) {
+    const handle = el.querySelector('.card-h'), st = cardState[key] || (cardState[key] = {});
+    const min = handle.querySelector('.card-min');
+    const apply = () => {
+      if (mobile) { resetCard(el); el.classList.remove('collapsed'); return; }
+      el.classList.toggle('collapsed', !!st.collapsed);
+      if (min) min.textContent = st.collapsed ? '+' : '–';
+      if (st.h && !st.collapsed) el.style.height = st.h + 'px';
+      if (st.x != null) placeCard(el, st.x, st.y);
+    };
+    handle.addEventListener('pointerdown', e => {
+      if (mobile || e.button > 0 || e.target.closest('button')) return;
+      e.preventDefault();
+      const r = el.getBoundingClientRect(), ox = e.clientX - r.left, oy = e.clientY - r.top;
+      if (el.dataset.resize != null && !st.collapsed) el.style.height = (st.h = Math.round(r.height)) + 'px';
+      handle.setPointerCapture(e.pointerId);
+      el.classList.add('dragging');
+      el.style.zIndex = ++zTop;
+      const mv = ev => placeCard(el, ev.clientX - ox, ev.clientY - oy);
+      const up = () => {
+        handle.removeEventListener('pointermove', mv);
+        handle.removeEventListener('pointerup', up);
+        handle.removeEventListener('pointercancel', up);
+        el.classList.remove('dragging');
+        const r2 = el.getBoundingClientRect();
+        st.x = Math.round(r2.left); st.y = Math.round(r2.top);
+        saveCards(); fitView();
+      };
+      handle.addEventListener('pointermove', mv);
+      handle.addEventListener('pointerup', up);
+      handle.addEventListener('pointercancel', up);
+    });
+    handle.addEventListener('dblclick', e => {
+      if (mobile || e.target.closest('button')) return;
+      delete st.x; delete st.y; delete st.h; saveCards(); resetCard(el); fitView();
+    });
+    if (min) min.addEventListener('click', () => {
+      st.collapsed = !st.collapsed;
+      if (st.collapsed) el.style.height = ''; 
+      saveCards(); apply(); fitView();
+    });
+    if (el.dataset.resize != null && window.ResizeObserver) {
+      let armed = false;
+      el.addEventListener('pointerdown', () => { armed = true; });
+      addEventListener('pointerup', () => { armed = false; });
+      new ResizeObserver(() => {
+        if (!armed || mobile || st.collapsed) return;
+        st.h = Math.round(el.getBoundingClientRect().height); saveCards();
+      }).observe(el);
+    }
+    el.addEventListener('pointerdown', () => { if (!mobile) el.style.zIndex = ++zTop; });
+    cards.push(apply); apply();
+  }
+  draggable($('legend'), 'legend');
+  draggable(document.querySelector('.roster'), 'roster');
+  draggable(insp, 'insp');
+  addEventListener('resize', () => requestAnimationFrame(() => cards.forEach(f => f())));
+
+  /* ---- fullscreen ---- */
+  const fsEl = document.documentElement;
+  const fsOK = !!(fsEl.requestFullscreen || fsEl.webkitRequestFullscreen);
+  function toggleFullscreen() {
+    if (!fsOK) return;
+    const on = document.fullscreenElement || document.webkitFullscreenElement;
+    if (on) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else (fsEl.requestFullscreen || fsEl.webkitRequestFullscreen).call(fsEl).catch?.(() => { });
+  }
+  const fsBtn = $('fs-btn');
+  if (!fsOK) fsBtn.remove();
+  else {
+    fsBtn.onclick = toggleFullscreen;
+    const sync = () => fsBtn.classList.toggle('on', !!(document.fullscreenElement || document.webkitFullscreenElement));
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('webkitfullscreenchange', sync);
+  }
+
   /* ---- inspector: real model card + benchmark aggregation ---- */
-  const insp = $('insp');
   function extractBenchmarks(m) {
     const mi = m.cardData && m.cardData['model-index'];
     const out = [];
@@ -827,7 +1060,7 @@ void main(){
       `<div class="in-row"><span>LICENSE</span><b>${a.license || '—'}</b></div>` +
       `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
-      `<div class="in-row"><span>MANIFEST</span><b class="hash">${a.hash}…</b></div>` +
+      `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
       `<div class="in-sec">CLASSIFICATION EVIDENCE</div>` +
       `<div class="in-ev">${(a.steps || []).join('<br>') || '—'}</div>` +
       `<div class="in-sec">BENCHMARKS — SELF-REPORTED</div>` +
@@ -917,7 +1150,7 @@ void main(){
   }
   syncStars();
   refresh();
-  cxIn.placeholder = mobile ? 'owner/model or URL' : 'classify a model — owner/name';
+  cxIn.placeholder = mobile ? 'search or owner/model' : 'search models · owner/model · hub URL';
   initGL();
   if (!glOK) document.body.classList.add('nogl');
   loadRegistry();
@@ -1033,7 +1266,8 @@ void main(){
       s.style.opacity = filterCls && c !== filterCls ? .08 : .75;
     }
     for (const s of axes) {
-      const [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
+      let [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
+      x = s === axes[0] ? Math.min(x, W - 12) : Math.max(x, 12);
       s.style.transform = `translate(${x}px,${y}px) ${s.dataset.tf}`;
       s.style.opacity = glOK ? .7 : 0;
     }
