@@ -52,7 +52,7 @@
     a.x = .07 + .84 * sc + (fr(i * 7.13 + .13) - .5) * .06;
     a.name = mo.m.id; a.downloads = mo.downloads || 0; a.likes = mo.m.likes || 0;
     a.pipeline = mo.m.pipeline_tag || ''; a.tags = mo.m.tags || [];
-    a.source = 'huggingface'; a.steps = mo.steps;
+    a.source = 'huggingface'; a.steps = mo.steps; a.gated = mo.m.gated || false; a.files = undefined;
     a.license = (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
     a.why = mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
     a.hash = '';
@@ -205,13 +205,13 @@
     const id = normId(raw);
     if (!id) return;
     const known = slotOf(id);
-    if (known >= 0) { addToMap(census.find(r => r.m.id === id) || { m: { id }, cls: AGENTS[known].cls, unsafe: AGENTS[known].revoked }); return; }
+    if (known >= 0) { addToMap(census.find(r => r.m.id === id) || { m: { id }, cls: AGENTS[known].cls, unsafe: AGENTS[known].revoked }); finishSearch(); return; }
     status('classifying…', 'busy');
     try {
       const r = await fetch(`https://huggingface.co/api/models/${id}`);
       if (!r.ok) throw new Error(r.status === 404 || r.status === 401 ? 'not found' : `hub ${r.status}`);
       addToMap(toRec(await r.json()));
-      closeDrop(); cxIn.value = ''; cxIn.blur();
+      finishSearch();
     } catch (e) {
       status(`✗ ${e.message === 'Failed to fetch' ? 'hub unreachable' : e.message}`, 'bad');
     }
@@ -255,6 +255,7 @@
     const on = cxDrop.querySelector('.on');
     if (on) on.scrollIntoView({ block: 'nearest' });
   }
+  function finishSearch() { closeDrop(); cxIn.value = ''; lastQ = ''; results = []; cxIn.blur(); }
   function closeDrop() {
     cxDrop.hidden = true; active = -1;
     cxIn.setAttribute('aria-expanded', 'false');
@@ -286,7 +287,7 @@
         results = results.filter(x => x.src !== 'hub').concat(hits);
       } catch (e) { if (e.name === 'AbortError') return; }
       hubAbort = null;
-      if (q === lastQ && document.activeElement === cxIn) render();
+      if (q && q === lastQ && document.activeElement === cxIn) render();
     }, 220);
   }
 
@@ -297,7 +298,7 @@
     const r = results[k];
     if (r.src === 'hub') { classifyId(r.rec.m.id); return; }
     addToMap(r.rec);
-    closeDrop(); cxIn.value = ''; cxIn.blur();
+    finishSearch();
   }
 
   cxIn.addEventListener('input', search);
@@ -1054,6 +1055,9 @@ void main(){
     $('in-cls').textContent = `CLASS ${RN[a.cls - 1]} · ${CLS_NAME[a.cls - 1]}`;
     $('in-cls').style.color = CLS_HEX[a.cls - 1];
     let body =
+      `<div class="in-act"><button type="button" id="in-dl" aria-expanded="false">⇩ DOWNLOAD WEIGHTS</button>` +
+      `<a href="https://huggingface.co/${a.name}" target="_blank" rel="noopener">MODEL CARD ↗</a></div>` +
+      `<div class="in-files" id="in-files" hidden></div>` +
       `<div class="in-row"><span>STATUS</span><b class="${a.revoked ? 'bad' : 'ok'}">${a.revoked ? (a.why || 'RESTRICTED').toUpperCase() : 'SELF-ATTESTED'}</b></div>` +
       `<div class="in-row"><span>PIPELINE</span><b>${a.pipeline || '—'}</b></div>` +
       `<div class="in-row"><span>DOWNLOADS</span><b>${fmtDl(a.downloads)}/mo · ♥${a.likes || 0}</b></div>` +
@@ -1064,9 +1068,9 @@ void main(){
       `<div class="in-sec">CLASSIFICATION EVIDENCE</div>` +
       `<div class="in-ev">${(a.steps || []).join('<br>') || '—'}</div>` +
       `<div class="in-sec">BENCHMARKS — SELF-REPORTED</div>` +
-      `<div class="in-bench" id="in-bench">${a.bench === null ? '—' : 'loading…'}</div>` +
-      `<a class="in-link" href="https://huggingface.co/${a.name}" target="_blank" rel="noopener">huggingface.co/${a.name} ↗</a>`;
+      `<div class="in-bench" id="in-bench">${a.bench === null ? '—' : 'loading…'}</div>`;
     $('in-body').innerHTML = body;
+    $('in-dl').onclick = () => toggleFiles(a);
     if (a.bench === undefined) enrichBench(a).then(() => {
       if (selIdx === a.i) $('in-bench').innerHTML = a.bench && a.bench.length
         ? a.bench.map(b2 => `<div class="in-row"><span>${b2.ds}</span><b>${b2.value}</b></div>`).join('')
@@ -1077,6 +1081,76 @@ void main(){
       : 'none declared on model card';
   }
   function closeInspector() { insp.style.display = 'none'; }
+
+  /* ---- weights — the repo's real file tree: sizes, LFS sha256, direct downloads ---- */
+  const fmtBytes = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : n >= 1e6 ? (n / 1e6).toFixed(1) + ' MB' : n >= 1e3 ? (n / 1e3).toFixed(0) + ' kB' : n + ' B';
+  const WEIGHT_RE = /\.(safetensors|gguf|bin|pt|pth|ckpt|onnx|h5|msgpack|tflite|mlmodel|npz)$/i;
+  const PICKLE_RE = /\.(bin|pt|pth|ckpt)$/i;
+  const fileUrl = (id, path) => `https://huggingface.co/${id}/resolve/main/${path.split('/').map(encodeURIComponent).join('/')}?download=true`;
+  async function loadFiles(a) {
+    if (a.files) return a.files;
+    const r = await fetch(`https://huggingface.co/api/models/${a.name}/tree/main?recursive=true`);
+    if (!r.ok) throw new Error(r.status === 401 || r.status === 404 ? 'repo not listable' : `hub ${r.status}`);
+    a.files = (await r.json()).filter(f => f.type === 'file');
+    return a.files;
+  }
+  function copyBtn(text) {
+    return `<button type="button" class="in-copy" data-copy="${esc(text)}">COPY</button>`;
+  }
+  function renderFiles(a, el) {
+    const files = a.files;
+    const weights = files.filter(f => WEIGHT_RE.test(f.path)), rest = files.filter(f => !WEIGHT_RE.test(f.path));
+    const total = files.reduce((n, f) => n + (f.size || 0), 0), wTotal = weights.reduce((n, f) => n + (f.size || 0), 0);
+    const ggufs = weights.filter(f => /\.gguf$/i.test(f.path));
+    const safe = weights.some(f => /\.safetensors$/i.test(f.path));
+    const pickle = weights.filter(f => PICKLE_RE.test(f.path));
+    /* shared prefix (cut at a separator) hidden so the distinguishing part — e.g. the quant — shows */
+    const base = f => f.path.slice(f.path.lastIndexOf('/') + 1);
+    const sharedPrefix = list => {
+      if (list.length < 2) return 0;
+      let p = base(list[0]);
+      for (const f of list) while (!base(f).startsWith(p)) p = p.slice(0, -1);
+      const cut = Math.max(p.lastIndexOf('-'), p.lastIndexOf('_'), p.lastIndexOf('/'), p.lastIndexOf('.'));
+      return cut > 8 ? cut + 1 : 0;
+    };
+    const row = (f, cut = 0) => `<a class="in-file" href="${fileUrl(a.name, f.path)}" download title="${esc(f.path)}${f.lfs ? '\nsha256 ' + f.lfs.oid : ''}">` +
+      `<span class="p${PICKLE_RE.test(f.path) ? ' warn' : ''}">${esc(f.path.slice(0, f.path.length - base(f).length))}${cut ? '…' : ''}${esc(base(f).slice(cut))}</span>` +
+      `<span class="s">${fmtBytes(f.size || 0)}</span>` +
+      `<span class="h">${f.lfs ? f.lfs.oid.slice(0, 10) : ''}</span><span class="d">⇩</span></a>`;
+    const wCut = sharedPrefix(weights);
+    const cmd = ggufs.length > 1 ? `hf download ${a.name} ${ggufs.sort((x, y) => x.size - y.size)[0].path}` : `hf download ${a.name}`;
+    el.innerHTML =
+      (a.gated ? `<div class="in-note bad">GATED — accept the license at huggingface.co/${esc(a.name)} while signed in; downloads 401 until then. CLI: <code>hf auth login</code> first.</div>` : '') +
+      (pickle.length && !safe ? `<div class="in-note bad">PICKLE-ONLY — ${pickle.length} file(s) execute code on load. No safetensors in this repo.</div>` : '') +
+      `<div class="in-row"><span>WEIGHTS</span><b>${weights.length} file${weights.length === 1 ? '' : 's'} · ${fmtBytes(wTotal)}</b></div>` +
+      `<div class="in-row"><span>REPO TOTAL</span><b>${files.length} files · ${fmtBytes(total)}</b></div>` +
+      `<div class="in-cmd"><code>${esc(cmd)}</code>${copyBtn(cmd)}</div>` +
+      (ggufs.length > 1 ? `<div class="in-note">${ggufs.length} GGUF quantizations — command fetches the smallest; pick one below.</div>` : '') +
+      `<div class="in-sec">WEIGHT FILES · sha256 (LFS)</div>` +
+      (weights.length ? weights.sort((x, y) => x.path.localeCompare(y.path, undefined, { numeric: true })).map(f => row(f, wCut)).join('') : '<div class="in-note">no weight files in this repo</div>') +
+      (rest.length ? `<details class="in-more"><summary>CONFIG · TOKENIZER · OTHER (${rest.length})</summary>${rest.map(f => row(f)).join('')}</details>` : '');
+  }
+  async function toggleFiles(a) {
+    const el = $('in-files'), btn = $('in-dl');
+    if (!el) return;
+    if (!el.hidden) { el.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.textContent = '⇩ DOWNLOAD WEIGHTS'; return; }
+    el.hidden = false; btn.setAttribute('aria-expanded', 'true'); btn.textContent = '▴ HIDE FILES';
+    if (!a.files) {
+      el.innerHTML = '<div class="in-note">listing repository…</div>';
+      try { await loadFiles(a); } catch (e) {
+        if (selIdx === a.i) el.innerHTML = `<div class="in-note bad">✗ ${e.message === 'Failed to fetch' ? 'hub unreachable' : esc(e.message)}</div>`;
+        return;
+      }
+    }
+    if (selIdx === a.i && !el.hidden) renderFiles(a, el);
+  }
+  insp.addEventListener('click', async e => {
+    const b = e.target.closest('.in-copy');
+    if (!b) return;
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'COPIED'; }
+    catch { b.textContent = 'SELECT ↑'; }
+    setTimeout(() => { b.textContent = 'COPY'; }, 1400);
+  });
   $('in-x').onclick = () => select(-1);
 
   /* legend class filter */

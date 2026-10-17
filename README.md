@@ -121,6 +121,14 @@ Portrait screens show a slice of the capability axis at zoom 1 — pan for the
 rest. Labels are collision-culled in priority order (selected → hovered →
 download rank), so dense regions only label what fits.
 
+**Download weights.** `⇩ DOWNLOAD WEIGHTS` on the inspector lists the repo's
+real file tree (`/api/models/{id}/tree/main`): weight files with sizes and
+their LFS `sha256` (verify after download), one-click direct downloads, a
+copyable `hf download` command (for multi-quant GGUF repos, the smallest
+quant — every quant listed), config/tokenizer files folded below. Gated repos
+are flagged (downloads 401 until the license is accepted); pickle-only repos
+are flagged as executing code on load.
+
 The inspector shows status, pipeline, downloads, license, manifest hash,
 the score, the full evidence chain, and **self-reported benchmarks** parsed
 from `cardData.model-index` (labeled as such — no independent eval runs here).
