@@ -127,7 +127,8 @@ strip. Restricted models mirror below the plane on the same measure.
 class band, `y` = the y measure, `z` = a second measure — **SIZE** (log
 parameters, front = larger), **RELEASED** (front = newer) or **ADOPTION**
 (front = more downloads); never the same as `y`. Unknowns (API-only sizes and
-download counts, undated repos) sit on the back wall. A perspective camera
+download counts, undated repos) sit on the back wall. Every class tier is the same width in 3D (the flat view sizes tiers by
+membership), so the cube is elongated along x. A perspective camera
 orbits the sky: drag orbits, right-drag / shift-drag / two fingers pan,
 scroll / pinch dollies, double-click resets. The certification plane becomes
 a real plane with a depth grid and band boundaries running front to back. Each axis

@@ -1163,7 +1163,18 @@ void main(){
   let view3d = URLQ.get('view') === '3d';
   let zAxis = Z_AXES[URLQ.get('z')] ? URLQ.get('z') : 'size';
   let zMix = view3d ? 1 : 0;
-  const CAM_HOME = { yaw: -.62, pitch: .22, dist: 3.3, tx: .5, ty: EY, tz: .5 };   // the cube's centre: +y and −y alike
+  /* 3D gives every class tier the same width (the flat view sizes them by
+     membership), so the cube stretches along x. xWorld maps a flat x to it. */
+  const BW3 = .16, X3_MID = SPAN0 + CLASSES.length * BW3 / 2;
+  const xWorld = x => {
+    if (zMix <= 0) return x;
+    let e;
+    if (x < SPAN0) e = x;
+    else if (x >= SPAN1) e = SPAN0 + CLASSES.length * BW3 + (x - SPAN1);
+    else { const k = BAND.findIndex(b => x < b.x0 + b.w), b = BAND[k]; e = SPAN0 + (k + (x - b.x0) / b.w) * BW3; }
+    return x + (e - x) * zMix;
+  };
+  const CAM_HOME = { yaw: -.5, pitch: .22, dist: 3.7, tx: X3_MID, ty: EY, tz: .5 };   // the cube's centre: +y and −y alike
   const CAM_FRONT = { yaw: 0, pitch: 0, dist: 1.75, tx: .5, ty: EY + .2, tz: .5 };
   /* portrait screens see less sideways: back the camera off so the plot's width fits */
   const fitDist = c => ({ ...c, dist: c.dist * Math.max(1, Math.pow(1.5 / (innerWidth / innerHeight), .55)) });
@@ -1191,8 +1202,8 @@ void main(){
     }
     cam.right = [rx, ry, rz]; cam.up = [ux, uy, uz];
   }
-  const project = (x, y, z) => {
-    const w = M3[3] * x + M3[7] * y + M3[11] * z + M3[15];
+  const project = (fx, y, z) => {
+    const x = xWorld(fx), w = M3[3] * x + M3[7] * y + M3[11] * z + M3[15];
     if (w <= .01) return [-1e4, -1e4, 0];
     return [((M3[0] * x + M3[4] * y + M3[8] * z + M3[12]) / w * .5 + .5) * W,
       (.5 - (M3[1] * x + M3[5] * y + M3[9] * z + M3[13]) / w * .5) * H, w];
@@ -1223,7 +1234,7 @@ void main(){
   /* fly the camera so node i sits clear of the inspector */
   function flyTo(i) {
     const a = AGENTS[i];
-    if (is3d()) { camT.tx = a.x; camT.ty = a.y; camT.tz = a.wz ?? .5; camT.dist = Math.min(camT.dist, 1.1); return; }
+    if (is3d()) { camT.tx = xWorld(a.x); camT.ty = a.y; camT.tz = a.wz ?? .5; camT.dist = Math.min(camT.dist, 1.1); return; }
     if (mobile) zoomT = Math.max(zoomT, 1.5);
     const ut = mobile ? .5 : .4, vt = mobile ? .74 : .5;
     panT.x = a.x - .5 - (ut - .5) * VX / zoomT;
@@ -1334,7 +1345,7 @@ void main(){
     const b = pickBubble(e.clientX, e.clientY);
     if (b) {
       userCam = true;
-      if (is3d()) { camT.tx = b.wx; camT.ty = b.wy; camT.tz = b.wz; camT.dist = Math.max(.35, camT.dist * .5); }
+      if (is3d()) { camT.tx = xWorld(b.wx); camT.ty = b.wy; camT.tz = b.wz; camT.dist = Math.max(.35, camT.dist * .5); }
       else zoomAt(e.clientX, e.clientY, zoomT * 2.4);
       return;
     }
@@ -2231,7 +2242,7 @@ void main(){
   function drawGrid() {
     lnData.length = 0;
     const z0 = zWorld(0), z1 = zWorld(1), a = zMix;
-    const seg = (x0, y0, za, x1, y1, zb, r, g, b, al) => lnData.push(x0, y0, za, r, g, b, al * a, x1, y1, zb, r, g, b, al * a);
+    const seg = (x0, y0, za, x1, y1, zb, r, g, b, al) => lnData.push(xWorld(x0), y0, za, r, g, b, al * a, xWorld(x1), y1, zb, r, g, b, al * a);
     // plane outline + depth grid (quarters of the z measure)
     seg(SPAN0, EY, z0, SPAN1, EY, z0, .84, .93, .89, .55);
     seg(SPAN0, EY, z1, SPAN1, EY, z1, .84, .93, .89, .75);
@@ -2326,12 +2337,12 @@ void main(){
     ptList.length = 0;
     for (const d of dust) {
       if ((asOf && d.date > asOf) || hiddenPhases.has(d.phase)) continue;
-      ptList.push([d.x, d.y, zWorld(d.zv ?? 0), d.cls, 3, 0, 0]);
+      ptList.push([xWorld(d.x), d.y, zWorld(d.zv ?? 0), d.cls, 3, 0, 0]);
     }
-    for (const b of bubbles) ptList.push([b.wx, b.wy, b.wz, b.cls, 4, b.n, 0]);
+    for (const b of bubbles) ptList.push([xWorld(b.wx), b.wy, b.wz, b.cls, 4, b.n, 0]);
     for (const a of AGENTS) {
       if (!a.used || a.hidden || a.future || !inLayers(a)) continue;
-      ptList.push([a.x, a.y, a.wz ?? .5, a.cls,
+      ptList.push([xWorld(a.x), a.y, a.wz ?? .5, a.cls,
         a.api ? 1 : a.phase === 'stripped' ? 5 : a.revoked ? 2 : a.phase === 'original' ? 0 : 6,
         a.i === selIdx ? 2 : a.i === hoverIdx ? 1 : 0,
         reducedMotion ? 0 : a.i === birthIdx && birthT < 2.5 ? 1 - birthT / 2.5 : a.bornT != null && clock - a.bornT < 1.6 ? 1 - (clock - a.bornT) / 1.6 : 0]);
