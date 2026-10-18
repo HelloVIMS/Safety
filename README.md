@@ -111,12 +111,11 @@ tags and name, in priority order:
 **Safety-stripped models sit below the certification plane whatever their
 class** — the repo itself declares its safety training removed — drawn as a red
 ✕, with the triggering tag or name in the evidence. Derivatives draw as a disc
-with a dark core. Each phase is a **layer** in the legend (on map / in
-registry counts), toggled on and off; layers compose with the class filter,
-the time axis and the registry list, and persist as `?hide=`. The community
-layers rank low by downloads, so the registry pulls dedicated cohorts
-(abliterated, uncensored, heretic, distill, merge, LoRA) and the map reserves
-slots for each layer.
+with a dark core. Each kind of model is a **lineage** filter in the legend (on
+map / in registry counts), toggled on and off; filters compose with the class
+filter, the time axis and the registry list, and persist as `?hide=`. The
+community kinds rank low by downloads, so the registry pulls dedicated cohorts
+(abliterated, uncensored, heretic, distill, merge, LoRA).
 
 **Axes.** `x` is the class band. `y` is chosen in the view bar (and kept in
 the URL as `?y=`): **ADOPTION** — open weights by download rank, API-only
@@ -145,8 +144,10 @@ older than March 2022 as 2022-03-02, so those all appear at the start. The
 fit stretches x and y independently (x is categorical), so the plot fills
 the space between the panels.
 
-**The whole registry on the sky.** The 192 plotted models are stars; every
-other ingested model (~450) is faint dust in its class band, on the same axes.
+**The whole registry on the sky.** Every registered model is a star (2,600
+slots: the live pull is ~1,600 open models and ~200 API-only ones, with room
+for search hits); only past that would the rest fall back to faint dust in
+their class band.
 Dense groups collapse into a counted bubble — click it (or zoom) to open it.
 
 The full reasoning is inspectable: every inspector card shows the evidence
@@ -247,7 +248,7 @@ from `cardData.model-index` (labeled as such — no independent eval runs here).
 | stage | source | notes |
 |---|---|---|
 | snapshot | `catalog.json` (bundled) | 22 real model cards, loads instantly |
-| frontier (API-only) | `openrouter.ai/api/v1/models` | every model OpenRouter routes with no Hugging Face id (closed weights) — ~190 after dropping `:variant` aliases; the frontier labs' newest (≤8 per lab) take 64 of the 240 map slots, all are searchable; bundled snapshot in `catalog.json` for offline |
+| frontier (API-only) | `openrouter.ai/api/v1/models` | every model OpenRouter routes with no Hugging Face id (closed weights) — ~190 after dropping `:variant` aliases; all are plotted, the frontier labs first; bundled snapshot in `catalog.json` for offline |
 | live | `huggingface.co/api/models` | 9 cohorts — top downloads, text/text2text/image-text/ASR pipelines, meta-llama, deepseek-ai, mistralai, nvidia; deduped (~400 models); top 128 plotted; no auth, CORS-open |
 | classify | `huggingface.co/api/models/{id}` | on-demand per model |
 | card evidence | `/api/models/{id}?expand[]=cardData,safetensors,config…` + `/{id}/raw/main/README.md` | lazy, on inspect: benchmarks, exact parameters, stated training tokens, MoE active count |

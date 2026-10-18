@@ -62,7 +62,9 @@
      not the slot. Empty slots draw nothing. */
   const EY = .34, ZOOM = 1.05;
   const AGENTS = [];
-  const NODES = 240, API_SLOTS = 64;
+  /* every registered model is a star: room for the whole registry (the live
+     pull is ~1,600 + ~200 API models), plus search hits */
+  const NODES = 2600, API_SLOTS = 320, SEARCH_RESERVE = 64;
   /* honoured everywhere motion is decorative: no sweep, glitch, roll, twinkle or flare */
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   for (let i = 0; i < NODES; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
@@ -313,33 +315,28 @@
     census = recs;
     registryTotal = recs.length;
     AGENTS.forEach(a => { a.used = false; });
-    /* API-only models from the frontier labs: newest first, at most 8 per lab
-       (every API model stays in the census — searchable, placeable) */
-    const perProv = {};
-    const apis = recs.filter(mo => mo.api && FRONTIER_LABS.has(mo.m.id.split('/')[0])).sort((p, q) => (q.m.created || 0) - (p.m.created || 0))
-      .filter(mo => { const p = mo.m.id.split('/')[0]; perProv[p] = (perProv[p] || 0) + 1; return perProv[p] <= 8; })
+    /* API-only models: every one, the frontier labs first, newest first */
+    const apis = recs.filter(mo => mo.api)
+      .sort((p, q) => (FRONTIER_LABS.has(q.m.id.split('/')[0]) - FRONTIER_LABS.has(p.m.id.split('/')[0])) || (q.m.created || 0) - (p.m.created || 0))
       .slice(0, API_SLOTS);
     let j = NODES - API_SLOTS;
     for (const mo of apis) placeModel(mo, j++);
+    /* open models: all of them. The order only matters if the registry ever
+       outgrows the map — each class and each lineage first, then by adoption;
+       below the plane, the safety-stripped models a public API serves first */
     recs = recs.filter(mo => !mo.api);
-    const ok = recs.filter(mo => !mo.unsafe), bad = recs.filter(mo => mo.unsafe);
-    const byCls = c => ok.filter(mo => mo.cls === c);
+    const cap = NODES - API_SLOTS - SEARCH_RESERVE, seen = new Set();
     let i = 0;
-    for (let c = 1; c <= NCLS && i < 40; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 40) break; placeModel(mo, i++); }
-    /* every phase layer gets representatives — the community layers rank low by downloads */
-    const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
-    /* below the plane: the safety-stripped models a public API serves come first */
-    const rank = ph => ph === 'stripped' ? (p, q) => (hostedBy.has(q.m.id.toLowerCase()) - hostedBy.has(p.m.id.toLowerCase())) || (q.downloads - p.downloads) : null;
-    for (const [ph, k] of [['stripped', 48], ['distilled', 8], ['merge', 6], ['adapter', 4], ['community', 8], ['quantized', 8]]) {
-      const pool = recs.filter(r => r.phase === ph && !seen.has(r.m.id));
-      if (rank(ph)) pool.sort(rank(ph));
-      for (const mo of pool.slice(0, k)) {
-        if (i >= NODES - API_SLOTS - 4) break;
-        placeModel(mo, i++); seen.add(mo.m.id);
-      }
+    const put = mo => { if (i < cap && !seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } };
+    const hostedFirst = (p, q) => (hostedBy.has(q.m.id.toLowerCase()) - hostedBy.has(p.m.id.toLowerCase())) || (q.downloads - p.downloads);
+    for (let c = 1; c <= NCLS; c++) recs.filter(mo => !mo.unsafe && mo.cls === c).slice(0, 8).forEach(put);
+    for (const ph of PHASES.map(p => p.id)) {
+      const pool = recs.filter(r => r.phase === ph);
+      if (ph === 'stripped') pool.sort(hostedFirst);
+      pool.slice(0, 8).forEach(put);
     }
-    for (const mo of ok) { if (i >= NODES - API_SLOTS - 4) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
-    for (const mo of bad.filter(r => r.phase !== 'stripped' && !seen.has(r.m.id)).slice(0, 4)) { if (i >= NODES - API_SLOTS) break; placeModel(mo, i++); }
+    recs.filter(mo => !mo.unsafe).forEach(put);
+    recs.filter(mo => mo.unsafe).sort(hostedFirst).forEach(put);
     refresh();
     fitView();
     syncTimeline(); syncYAxis(); syncView();
@@ -1072,7 +1069,7 @@ void main(){
     const s = document.createElement('span');
     s.className = 'node-lb';
     s.style.cssText = `position:absolute;left:0;top:0;font-size:9px;letter-spacing:.1em;color:var(--dim);
-      opacity:0;white-space:nowrap;transition:opacity .2s;text-shadow:0 0 4px #000,0 0 2px #000;will-change:transform`;
+      opacity:0;display:none;white-space:nowrap;transition:opacity .2s;text-shadow:0 0 4px #000,0 0 2px #000;will-change:transform`;
     labelsEl.appendChild(s);
     return s;
   });
@@ -1556,7 +1553,7 @@ void main(){
       `<div class="in-row"><span>LICENSE</span><b>${a.license || '—'}</b></div>` +
       `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
       `<div class="in-row"><span>SIZE</span><b>${a.paramsB ? fmtB(a.paramsB) + ' params' : '—'} · ${esc(BASIS_LABEL(a.basis))}</b></div>` +
-      `<div class="in-row"><span>PHASE</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">${esc(PHASE[a.phase || 'original'].label)} · ${esc(a.phaseWhy || '')}${a.teacher ? ` · teacher ${esc(a.teacher)}` : ''}</b></div>` +
+      `<div class="in-row"><span>LINEAGE</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">${esc(PHASE[a.phase || 'original'].label)} · ${esc(a.phaseWhy || '')}${a.teacher ? ` · teacher ${esc(a.teacher)}` : ''}</b></div>` +
       (a.hosted ? `<div class="in-row"><span>HOSTED</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">served on ${esc(a.hosted)}'s public API${a.phase === 'stripped' ? ' — safety-stripped and callable by anyone: out of containment' : ''} · resold by routers such as DemonRoute</b></div>` : '') +
       lineageRows(a) +
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
@@ -1833,7 +1830,7 @@ void main(){
 
   /* legend class filter */
   let filterCls = 0;
-  /* phase layers shown on the sky (?hide=quantized,merge…) */
+  /* lineage filters: which kinds of model the sky shows (?hide=quantized,merge…) */
   const hiddenPhases = new Set((new URLSearchParams(location.search).get('hide') || '').split(',').filter(p => PHASE[p]));
   const inLayers = a => !hiddenPhases.has(a.phase || 'original');
   $('lg-rows').innerHTML = CLASSES.map((k, i) =>
@@ -2404,7 +2401,7 @@ void main(){
     if (hoverIdx >= 0 && hoverIdx !== selIdx) order.push(hoverIdx);
     for (let i = 0; i < AGENTS.length; i++) if (i !== selIdx && i !== hoverIdx) order.push(i);
     rects.length = 0;
-    const budget = mobile ? (zoom > 1.6 ? 40 : zoom > 1.2 ? 16 : 8) : (zoom > 1.4 ? NODES : zoom > 1.05 ? 56 : 28);
+    const budget = mobile ? (zoom > 1.6 ? 40 : zoom > 1.2 ? 16 : 8) : (zoom > 1.4 ? 180 : zoom > 1.05 ? 56 : 28);
     let nLabels = 0;
     for (const i of order) {
       const a = AGENTS[i], s = nodeLabels[i];
@@ -2412,7 +2409,7 @@ void main(){
       let vis = 0;
       if (a.used && glOK && !a.hidden && !a.future && inLayers(a) && !(filterCls && a.cls !== filterCls) && (hot || nLabels < budget)) {
         const [x, y] = toScreen(a.x, a.y, a.wz);
-        const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;
+        const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;   // only the ≤budget candidates read this
         const onScreen = x > 4 && x < W - 4 && y > headerBottom && y < H - 20;
         if (onScreen && (hot || !rects.some(r => l < r[2] && l + w > r[0] && tp < r[3] && tp + LB_H > r[1]))) {
           const cx = clamp(x, w / 2 + 2, W - w / 2 - 2);
@@ -2421,8 +2418,15 @@ void main(){
           vis = hot ? 1 : .62; nLabels++;
         }
       }
-      s.style.color = hot ? CLS_HEX[a.cls - 1] : 'var(--dim)';
-      s.style.opacity = vis;
+      /* a label's style is written only when it changes: with the whole
+         registry on the sky, most of the 2,600 are hidden every frame */
+      const col = hot ? CLS_HEX[a.cls - 1] : 'var(--dim)';
+      if (s._col !== col) { s.style.color = col; s._col = col; }
+      if (s._vis !== vis) {
+        // hidden ones leave the render tree: each label is its own compositor layer (will-change)
+        s.style.display = vis ? '' : 'none';
+        s.style.opacity = vis; s._vis = vis;
+      }
     }
   }
   requestAnimationFrame(draw);
