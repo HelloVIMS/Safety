@@ -1051,7 +1051,7 @@ void main(){
   const axes = [
     ['CLASS · CAPABILITY →', SPAN1 - .005, EY - .018, 'translate(-100%,-50%)'],
     ['DOWNLOADS ↑', .008, EY + .28, 'rotate(-90deg) translate(-50%,0)'],
-    ['CERTIFICATION PLANE · ▲ SAFETY INTACT · ▼ RESTRICTED, SAFETY-STRIPPED', SPAN0 + .002, EY + .014, 'translate(0,-50%)'],
+    ['SAFETY-STRIPPED ▼', SPAN0 + .002, EY - .014, 'translate(0,-50%)'],
     ['API · NEWEST ↑', .008, EY + .65, 'rotate(-90deg) translate(-50%,0)'],
     ['', SPAN1 + .015, EY, 'translate(0,-50%)', 'axis'],
   ].map(([txt, x, y, tf, z]) => {
@@ -1062,6 +1062,23 @@ void main(){
       opacity:.7;white-space:nowrap;transform-origin:0 50%;will-change:transform`;
     labelsEl.appendChild(s);
     return s;
+  });
+
+  /* 3D: the three axes leave one corner (back-left, on the plane) and each
+     ends at its own corner in an arrowhead drawn in 3D — so it points true
+     from any side — labelled there with what it measures and which way is more */
+  const AXIS_WORDS = {
+    adoption: { name: 'DOWNLOADS', hi: 'MORE' },
+    released: { name: 'RELEASED', hi: 'NEWER' },
+    size: { name: 'PARAMETERS', hi: 'LARGER' },
+  };
+  const axis3d = ['x', 'y', 'z'].map(k => {
+    const s = document.createElement('span');
+    s.className = 'ax3d';
+    s.style.cssText = `position:absolute;left:0;top:0;font-size:9.5px;font-weight:700;letter-spacing:.2em;white-space:nowrap;opacity:0;z-index:2;
+      color:var(--amber);background:rgba(2,5,5,.72);padding:2px 5px;text-shadow:0 0 4px #000;will-change:transform;pointer-events:none`;
+    labelsEl.appendChild(s);
+    return [k, s];
   });
 
   /* per-node name labels — the stars are clickable entities */
@@ -2223,13 +2240,27 @@ void main(){
     seg(SPAN0, EY - .3, z0, SPAN0, EY + .78, z0, .84, .93, .89, .35);
     seg(SPAN1, EY - .3, z0, SPAN1, EY + .78, z0, .84, .93, .89, .12);
     seg(SPAN0, EY + .78, z0, SPAN1, EY + .78, z0, .84, .93, .89, .08);
-    // z axis along the right edge of the plane, toward the viewer
-    seg(SPAN1 + .015, EY, z0, SPAN1 + .015, EY, z1, .25, .85, .7, .7);
+    // z axis along the left edge of the plane, toward the viewer
+    seg(SPAN0, EY, z0, SPAN0, EY, z1, .25, .85, .7, .7);
+    // arrowheads on the three axes, in world space: they point true from any
+    // side. Each is two crossed chevrons so it never vanishes edge-on.
+    const arrow = (x, y, z, dx, dy, dz) => {
+      const L = .028, w = .011;
+      const p1 = Math.abs(dy) < .9 ? [0, 1, 0] : [1, 0, 0];
+      const c1 = [dy * p1[2] - dz * p1[1], dz * p1[0] - dx * p1[2], dx * p1[1] - dy * p1[0]];
+      const c2 = [dy * c1[2] - dz * c1[1], dz * c1[0] - dx * c1[2], dx * c1[1] - dy * c1[0]];
+      for (const c of [c1, c2]) for (const sgn of [1, -1])
+        seg(x, y, z, x - dx * L + c[0] * w * sgn, y - dy * L + c[1] * w * sgn, z - dz * L + c[2] * w * sgn, .25, .85, .7, .85);
+    };
+    seg(SPAN0, EY, z0, SPAN1 + .03, EY, z0, .25, .85, .7, .7);   // x along the back edge
+    arrow(SPAN1 + .03, EY, z0, 1, 0, 0);
+    arrow(SPAN0, EY + .78, z0, 0, 1, 0);
+    arrow(SPAN0, EY, z1, 0, 0, 1);
     // drop lines: the selected star to the plane, so its depth reads
     const s = selIdx >= 0 ? AGENTS[selIdx] : null;
     if (s && s.used) {
       seg(s.x, s.y, s.wz, s.x, EY, s.wz, 1, 1, 1, .45);
-      seg(s.x, EY, s.wz, SPAN1 + .015, EY, s.wz, 1, 1, 1, .18);
+      seg(s.x, EY, s.wz, SPAN0, EY, s.wz, 1, 1, 1, .18);   // across to the z axis, where its depth reads
     }
     const p = progLn;
     gl.useProgram(p.p);
@@ -2389,13 +2420,36 @@ void main(){
       beyond.style.transform = `translate(${bx}px,${by}px) rotate(-90deg)`;
       beyond.style.opacity = glOK && flat ? .55 : 0;
     }
+    const below = axes[2], below3d = zMix > .5;
+    const belowTxt = below3d ? 'SAFETY-STRIPPED · BELOW THE PLANE' : 'SAFETY-STRIPPED ▼';   // ▼ is wrong from underneath
+    if (below.textContent !== belowTxt) below.textContent = belowTxt;
     for (const s of axes) {
       const z = s.dataset.z === 'axis' ? .5 : zf;
-      let [x, y] = toScreen(+s.dataset.x, +s.dataset.y, s.dataset.z === 'axis' ? zWorld(1) + .04 : z);
+      // in 3D the plane's caption runs along the front edge, clear of the z axis's corner
+      const sx = s === below && below3d ? (SPAN0 + SPAN1) / 2 : +s.dataset.x;
+      let [x, y] = toScreen(sx, +s.dataset.y, s.dataset.z === 'axis' ? zWorld(1) + .04 : z);
       if (s.dataset.z !== 'axis') x = s === axes[0] ? Math.min(x, W - 12) : Math.max(x, 12);
       s.style.transform = `translate(${x}px,${y}px) ${s.dataset.tf}`;
-      s.style.opacity = !glOK ? 0 : s.dataset.z === 'axis' ? .8 * zMix : .7;
+      // the screen-relative captions (with → / ↑) are the flat view's; 3D labels its own axes
+      const flatOnly = s === axes[0] || s === axes[1] || s === axes[3] || s.dataset.z === 'axis';
+      s.style.opacity = !glOK ? 0 : flatOnly ? .7 * (1 - zMix) : .7;
     }
+    if (zMix > .002) {
+      const yw = AXIS_WORDS[yAxis], zw = AXIS_WORDS[zAxis], z0 = zWorld(0), z1 = zWorld(1);
+      const at = {
+        // no text arrows: on screen they'd point wrong from behind — the 3D arrowhead shows the way
+        x: [SPAN1 + .05, EY, z0, 'X · CLASS · HIGHER CAPABILITY'],
+        y: [SPAN0, EY + .82, z0, `Y · ${yw.name} · ${yw.hi}`],
+        z: [SPAN0, EY, z1 + .06, `Z · ${zAxis === 'size' ? 'SIZE' : zw.name} · ${zw.hi}`],
+      };
+      for (const [k, s] of axis3d) {
+        const [wx, wy, wz, txt] = at[k];
+        if (s.textContent !== txt) s.textContent = txt;
+        const [x, y] = toScreen(wx, wy, wz);
+        s.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`;
+        s.style.opacity = glOK ? .95 * zMix : 0;
+      }
+    } else for (const [, s] of axis3d) if (s.style.opacity !== '0') s.style.opacity = 0;
     order.length = 0;
     if (selIdx >= 0) order.push(selIdx);
     if (hoverIdx >= 0 && hoverIdx !== selIdx) order.push(hoverIdx);
