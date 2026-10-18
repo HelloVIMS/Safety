@@ -1074,10 +1074,10 @@ void main(){
     released: { name: 'RELEASED', hi: 'NEWER' },
     size: { name: 'PARAMETERS', hi: 'LARGER' },
   };
-  const axis3d = Array.from({ length: 10 }, () => {
+  const axis3d = Array.from({ length: 8 }, () => {
     const s = document.createElement('span');
     s.className = 'ax3d';
-    s.style.cssText = `position:absolute;left:0;top:0;font-size:8.5px;font-weight:700;letter-spacing:.14em;white-space:nowrap;opacity:0;z-index:2;
+    s.style.cssText = `position:absolute;left:0;top:0;font-size:8.5px;font-weight:700;letter-spacing:.14em;white-space:nowrap;opacity:0;z-index:2;transform-origin:0 0;
       color:var(--amber);background:rgba(2,5,5,.72);padding:2px 5px;text-shadow:0 0 4px #000;will-change:transform;pointer-events:none`;
     labelsEl.appendChild(s);
     return s;
@@ -2439,24 +2439,25 @@ void main(){
     }
     if (zMix > .002) {
       const yw = AXIS_WORDS[yAxis], zw = AXIS_WORDS[zAxis], z0 = zWorld(0), z1 = zWorld(1);
-      const X = 'X · CLASS · HIGHER CAPABILITY', Y = `Y · ${yw.name} · ${yw.hi}`;
-      const NY = `−Y · SAFETY-STRIPPED · ${yw.name} · ${yw.hi}`, Z = `Z · ${zAxis === 'size' ? 'SIZE' : zw.name} · ${zw.hi}`;
-      // [from, to (the way the measure grows), text]
+      const X = ['', 'X · CLASS · HIGHER CAPABILITY'], Z = ['', `Z · ${zAxis === 'size' ? 'SIZE' : zw.name} · ${zw.hi}`];
+      // the vertical edges run both ways from the plane: −y (stripped) down, +y up
+      const Y = [`−Y · SAFETY-STRIPPED · ${yw.hi}`, `${yw.name} · ${yw.hi} · Y`];
+      // the cube's eight edges: [from, to (the way the measure grows), [toward from, toward to]]
       const edges = [
         [[SPAN0, EY, z0], [SPAN1, EY, z0], X], [[SPAN0, EY, z1], [SPAN1, EY, z1], X],
         [[SPAN0, EY + YH, z0], [SPAN1, EY + YH, z0], X], [[SPAN0, EY - YH, z0], [SPAN1, EY - YH, z0], X],
         [[SPAN0, EY, z0], [SPAN0, EY, z1], Z], [[SPAN1, EY, z0], [SPAN1, EY, z1], Z],
-        [[SPAN0, EY, z0], [SPAN0, EY + YH, z0], Y], [[SPAN1, EY, z0], [SPAN1, EY + YH, z0], Y],
-        [[SPAN0, EY, z0], [SPAN0, EY - YH, z0], NY], [[SPAN1, EY, z0], [SPAN1, EY - YH, z0], NY],
+        [[SPAN0, EY - YH, z0], [SPAN0, EY + YH, z0], Y], [[SPAN1, EY - YH, z0], [SPAN1, EY + YH, z0], Y],
       ];
-      edges.forEach(([a, b, t], k) => {
+      edges.forEach(([a, b, [neg, pos]], k) => {
         const s = axis3d[k], p0 = toScreen(...a), p1 = toScreen(...b);
         const dx = p1[0] - p0[0], dy = p1[1] - p0[1], len = Math.hypot(dx, dy);
         // near-vertical edges always read bottom to top, so the text doesn't spin as the cube turns
         const flip = Math.abs(dx) > .08 * len ? dx < 0 : dy > 0, ang = Math.atan2(dy, dx) + (flip ? Math.PI : 0);
-        const txt = flip ? '← ' + t : t + ' →';
+        // each arrow points at the end it names: ← toward where reading starts, → toward where it ends
+        const txt = !neg ? (flip ? '← ' + pos : pos + ' →') : flip ? `← ${pos}  ·  ${neg} →` : `← ${neg}  ·  ${pos} →`;
         if (s.textContent !== txt) s.textContent = txt;
-        s.style.transform = `translate(${(p0[0] + p1[0]) / 2}px,${(p0[1] + p1[1]) / 2}px) rotate(${ang}rad) translate(-50%,-110%)`;
+        s.style.transform = `translate(${(p0[0] + p1[0]) / 2}px,${(p0[1] + p1[1]) / 2}px) rotate(${ang}rad) translate(-50%,-50%)`;   // on the line
         // an edge seen end-on has no direction to read: fade it rather than spin it
         s.style.opacity = glOK && p0[2] > 0 && p1[2] > 0 ? .95 * zMix * clamp((len - 60) / 120, 0, 1) : 0;
       });
