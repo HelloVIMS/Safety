@@ -99,7 +99,7 @@ tags and name, in priority order:
 
 | Phase | Evidence |
 |---|---|
-| ANTI-CERTIFIED | `abliterated`, `uncensored`, `heretic`, `obliterated`, "refusals removed", `unaligned`, `unfiltered`, `jailbreak` in a tag or the name |
+| SAFETY-STRIPPED | `abliterated`, `uncensored`, `heretic`, `obliterated`, "refusals removed", `unaligned`, `unfiltered`, `jailbreak` in a tag or the name |
 | DISTILLED | `distillation` tag or `distil` in the name (teacher parsed from `<teacher>-Distill-…`) |
 | MERGE | `base_model:merge`, `merge` / `mergekit` tags |
 | ADAPTER | `base_model:adapter`, LoRA / PEFT tags |
@@ -108,7 +108,7 @@ tags and name, in priority order:
 | COMMUNITY FINE-TUNE | `base_model` from a different org |
 | ORIGINAL | no `base_model` tag (all API-only models) |
 
-**Anti-certified models sit below the certification plane whatever their
+**Safety-stripped models sit below the certification plane whatever their
 class** — the repo itself declares its safety training removed — drawn as a red
 ✕, with the triggering tag or name in the evidence. Derivatives draw as a disc
 with a dark core. Each phase is a **layer** in the legend (on map / in
@@ -124,7 +124,20 @@ models (no download counts) in a strip by release date; **RELEASED** — every
 model by publication date on one axis; **SIZE** — open weights by parameter
 count on a log scale (10M → 1T), API-only models (sizes unpublished) in a
 strip. Restricted models mirror below the plane on the same measure.
-**`z` is time:** the timeline sets an *as of* month (`?asof=YYYY-MM`) — models
+**3D star map (`?view=3d&z=…`, key `3`).** A real third spatial axis: `x` =
+class band, `y` = the y measure, `z` = a second measure — **SIZE** (log
+parameters, front = larger), **RELEASED** (front = newer) or **ADOPTION**
+(front = more downloads); never the same as `y`. Unknowns (API-only sizes and
+download counts, undated repos) sit on the back wall. A perspective camera
+orbits the sky: drag orbits, right-drag / shift-drag / two fingers pan,
+scroll / pinch dollies, double-click resets. The certification plane becomes
+a real plane with a depth grid, band boundaries running front to back, and y
+/ z axes; stars grow nearer and fade with distance (depth-sorted); the
+selected star drops a line to the plane and across to the z axis. Switching
+animates: the sky tilts and the depth grows out. Picking, clusters, labels and
+lineage lines all project through the same camera.
+
+**Time is the fourth dimension:** the timeline sets an *as of* month (`?asof=YYYY-MM`) — models
 published later don't exist yet, on the sky or in the registry list — and ▶
 plays the whole history in ~24 s, each star flaring as it appears. Dates are
 Hugging Face `createdAt` / OpenRouter `created`; the Hub dates every repo

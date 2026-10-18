@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="console.css?v=9">
+  <link rel="stylesheet" href="console.css?v=10">
 </head>
 <body>
 
@@ -45,7 +45,7 @@
       <div id="lg-rows"></div>
       <div class="lg-sub">PHASE LAYERS · ON MAP / REGISTRY</div>
       <div id="lg-layers" role="group" aria-label="Phase layers"></div>
-      <div class="lg-shapes" aria-label="Shape key"><span><i class="sh open"></i>open weights</span><span><i class="sh api"></i>API-only</span><span><i class="sh drv"></i>derivative</span><span><i class="sh rsv"></i>restricted</span><span><i class="sh anti"></i>anti-certified</span></div>
+      <div class="lg-shapes" aria-label="Shape key"><span><i class="sh open"></i>open weights</span><span><i class="sh api"></i>API-only</span><span><i class="sh drv"></i>derivative</span><span><i class="sh rsv"></i>restricted</span><span><i class="sh stripped"></i>safety-stripped</span></div>
       <div class="lg-note">I–V FROM METADATA · VI–VII FROM CARD EVIDENCE<br>VIII–X RESERVED — EMPTY UNTIL EVIDENCE EXISTS<br>SELECT A CLASS TO ISOLATE · MARKERS SHOW CRITERIA</div>
     </div>
 
@@ -60,21 +60,31 @@
     </div>
 
     <div class="viewbar" id="viewbar" role="toolbar" aria-label="View">
+      <div class="vb-group" id="view-mode" role="group" aria-label="View">
+        <button type="button" data-view="2d" aria-pressed="true">2D</button>
+        <button type="button" data-view="3d" aria-pressed="false" title="3D star map — drag to orbit, right-drag or shift-drag to pan, scroll to dolly, double-click to reset (key: 3)">3D</button>
+      </div>
       <div class="vb-group" id="y-axis" role="group" aria-label="Y axis">
         <span class="vb-k">Y</span>
         <button type="button" data-y="adoption" aria-pressed="true">ADOPTION</button>
         <button type="button" data-y="released" aria-pressed="false">RELEASED</button>
         <button type="button" data-y="size" aria-pressed="false">SIZE</button>
       </div>
+      <div class="vb-group" id="z-axis" role="group" aria-label="Z axis" hidden>
+        <span class="vb-k">Z</span>
+        <button type="button" data-z="size" aria-pressed="true">SIZE</button>
+        <button type="button" data-z="released" aria-pressed="false">RELEASED</button>
+        <button type="button" data-z="adoption" aria-pressed="false">ADOPTION</button>
+      </div>
       <div class="vb-group vb-time" role="group" aria-label="Time">
-        <span class="vb-k">Z · TIME</span>
+        <span class="vb-k">TIME</span>
         <button type="button" id="tl-play" aria-label="Play the release timeline">▶</button>
         <input type="range" id="tl" min="0" max="1" value="1" step="1" aria-label="As of month" title="Publication date: Hugging Face createdAt / OpenRouter created. The Hub dates every repo older than March 2022 as 2022-03-02, so they all appear at the start.">
         <span class="vb-v" id="tl-label">NOW</span>
       </div>
     </div>
 
-    <div class="hint">DRAG · SCROLL ZOOM · CLICK A STAR<br>DRAG CARD HEADERS · DBL-CLICK RESETS<br>/ SEARCH · F FULLSCREEN · H HIDE PANELS</div>
+    <div class="hint">DRAG · SCROLL ZOOM · CLICK A STAR · DBL-CLICK RESETS<br>3 · 3D STAR MAP — DRAG ORBITS, RIGHT-DRAG PANS<br>/ SEARCH · F FULLSCREEN · H HIDE PANELS</div>
 
     <div class="modal" id="key-modal" hidden>
       <div class="mo-card" role="dialog" aria-modal="true" aria-labelledby="mo-title" tabindex="-1">
@@ -90,7 +100,7 @@
     </nav>
   </div>
 
-  <script src="map.js?v=9"></script>
+  <script src="map.js?v=10"></script>
   <script>
     // The VIMS app selector — the same one every VIMS app opens (web-nav
     // ServiceSwitcher, bundled by vims.com), loaded on first use.

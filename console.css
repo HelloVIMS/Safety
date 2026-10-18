@@ -449,18 +449,25 @@ button.ro-row:focus-visible,button.lg-row:focus-visible,.cls-mark:focus-visible,
 .ly-row i{width:9px;height:9px;border:1px solid var(--amber);flex:none}
 .ly-row[aria-pressed=true] i{background:var(--amber)}
 .ly-row[aria-pressed=false]{color:var(--dim)}
-.ly-row.anti{color:var(--red)}
-.ly-row.anti i{border-color:var(--red)}
-.ly-row.anti[aria-pressed=true] i{background:var(--red)}
+.ly-row.stripped{color:var(--red)}
+.ly-row.stripped i{border-color:var(--red)}
+.ly-row.stripped[aria-pressed=true] i{background:var(--red)}
 .ly-row .n{margin-left:auto;color:var(--dim);font-variant-numeric:tabular-nums}
 .ly-row:focus-visible{outline:1px solid var(--amber);outline-offset:-1px}
 .sh.drv{background:radial-gradient(circle,#020505 0 35%,var(--ink) 40%)}
-.sh.anti{background:none;position:relative;border-radius:0}
-.sh.anti::before,.sh.anti::after{content:'';position:absolute;left:-1px;right:-1px;top:4px;height:1.5px;background:var(--red)}
-.sh.anti::before{transform:rotate(45deg)}.sh.anti::after{transform:rotate(-45deg)}
-.ro-row.anti .st{background:none;box-shadow:none;position:relative;border-radius:0}
-.ro-row.anti .st::before,.ro-row.anti .st::after{content:'';position:absolute;left:-1px;right:-1px;top:2.5px;height:1.5px;background:var(--red)}
-.ro-row.anti .st::before{transform:rotate(45deg)}.ro-row.anti .st::after{transform:rotate(-45deg)}
+.sh.stripped{background:none;position:relative;border-radius:0}
+.sh.stripped::before,.sh.stripped::after{content:'';position:absolute;left:-1px;right:-1px;top:4px;height:1.5px;background:var(--red)}
+.sh.stripped::before{transform:rotate(45deg)}.sh.stripped::after{transform:rotate(-45deg)}
+.ro-row.stripped .st{background:none;box-shadow:none;position:relative;border-radius:0}
+.ro-row.stripped .st::before,.ro-row.stripped .st::after{content:'';position:absolute;left:-1px;right:-1px;top:2.5px;height:1.5px;background:var(--red)}
+.ro-row.stripped .st::before{transform:rotate(45deg)}.ro-row.stripped .st::after{transform:rotate(-45deg)}
 
 #legend{max-width:340px}
 .lg-shapes{gap:5px 10px}
+
+.viewbar button:disabled{opacity:.3;cursor:default}
+.vb-group[hidden]{display:none}
+#view-mode button{min-width:34px}
+.is3d #stage{cursor:grab}
+/* the view bar owns the bottom centre; the hint moves above the registry's foot */
+@media (max-width:1700px){.hint{display:none}}

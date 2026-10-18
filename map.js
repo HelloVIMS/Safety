@@ -96,7 +96,7 @@
     a.source = 'huggingface'; a.steps = mo.steps; a.gated = mo.m.gated || false; a.files = undefined;
     a.license = a.api ? 'proprietary — provider API terms' : (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
     a.phase = mo.phase || 'original'; a.phaseWhy = mo.phaseWhy || ''; a.teacher = mo.teacher || null;
-    a.why = a.phase === 'anti' ? 'anti-certified — safety training removed' : mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
+    a.why = a.phase === 'stripped' ? 'safety-stripped — safety training removed' : mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
     a.hash = '';
     const name = a.name;
     manifestHash(mo.m).then(h => {
@@ -141,7 +141,7 @@
   }
 
   /* ============ PHASES — where a model sits in its family ============
-     Read from the repo's own tags and name, in priority order. Anti-certified
+     Read from the repo's own tags and name, in priority order. Safety-stripped
      (safety training deliberately removed) sits below the certification plane
      whatever its class: its own manifest declares the safeguards gone. */
   const PHASES = [
@@ -152,14 +152,14 @@
     { id: 'distilled', label: 'DISTILLED', short: 'DISTILLED', note: "a teacher's behaviour trained into a smaller student" },
     { id: 'merge', label: 'MERGE', short: 'MERGE', note: 'several models blended' },
     { id: 'adapter', label: 'ADAPTER', short: 'ADAPTER', note: 'a LoRA / PEFT patch on a base' },
-    { id: 'anti', label: 'ANTI-CERTIFIED', short: 'ANTI-CERT', note: 'safety training removed — abliterated, uncensored, heretic…' },
+    { id: 'stripped', label: 'SAFETY-STRIPPED', short: 'STRIPPED', note: 'safety training removed — abliterated, uncensored, heretic…' },
   ];
   const PHASE = Object.fromEntries(PHASES.map(p => [p.id, p]));
-  const ANTI_RE = /abliterat|uncensor|heretic|obliterat|refusal[-_ ]?(?:remov|free|less)|no[-_]?refusals?\b|unaligned|unfiltered|jailbr[eo]/i;
+  const STRIP_RE = /abliterat|uncensor|heretic|obliterat|refusal[-_ ]?(?:remov|free|less)|no[-_]?refusals?\b|unaligned|unfiltered|jailbr[eo]/i;
   function phaseOf(m, id) {
     const tags = m.tags || [], lin = lineageOf(tags), owner = id.split('/')[0];
-    const antiTag = tags.find(t => ANTI_RE.test(t)), antiName = ANTI_RE.exec(id);
-    if (antiTag || antiName) return { phase: 'anti', why: antiTag ? `tag "${antiTag}"` : `"${antiName[0]}" in the name` };
+    const stripTag = tags.find(t => STRIP_RE.test(t)), stripName = STRIP_RE.exec(id);
+    if (stripTag || stripName) return { phase: 'stripped', why: stripTag ? `tag "${stripTag}"` : `"${stripName[0]}" in the name` };
     if (tags.includes('distillation') || /distil/.test(id)) {
       const t = /\/([a-z0-9.]+(?:-[a-z0-9.]+)*?)-distill/.exec(id);
       return { phase: 'distilled', why: tags.includes('distillation') ? 'tag "distillation"' : '"distil" in the name', teacher: t ? t[1] : null };
@@ -235,9 +235,9 @@
     }
     cls = applyRegister(id, cls, steps);
     steps.push(`phase: ${PHASE[phase.phase].label.toLowerCase()} — ${phase.why}`);
-    const anti = phase.phase === 'anti';
-    const unsafe = anti || !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
-    if (anti) steps.push('safety training removed → ANTI-CERTIFIED (below the plane)');
+    const stripped = phase.phase === 'stripped';
+    const unsafe = stripped || !!m.gated || (tags.includes('pytorch') && !tags.includes('safetensors'));
+    if (stripped) steps.push('safety training removed → SAFETY-STRIPPED (below the plane)');
     else if (m.gated) steps.push(`gated=${m.gated === true ? 'true' : m.gated} → restricted`);
     else if (unsafe) steps.push('no safetensors → restricted');
     else steps.push('self-attested manifest');
@@ -319,17 +319,17 @@
     for (let c = 1; c <= NCLS && i < 40; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 40) break; placeModel(mo, i++); }
     /* every phase layer gets representatives — the community layers rank low by downloads */
     const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
-    for (const [ph, k] of [['anti', 14], ['distilled', 8], ['merge', 6], ['adapter', 4], ['community', 8], ['quantized', 8]]) {
+    for (const [ph, k] of [['stripped', 14], ['distilled', 8], ['merge', 6], ['adapter', 4], ['community', 8], ['quantized', 8]]) {
       for (const mo of recs.filter(r => r.phase === ph && !seen.has(r.m.id)).slice(0, k)) {
         if (i >= NODES - API_SLOTS - 4) break;
         placeModel(mo, i++); seen.add(mo.m.id);
       }
     }
     for (const mo of ok) { if (i >= NODES - API_SLOTS - 4) break; if (!seen.has(mo.m.id)) { placeModel(mo, i++); seen.add(mo.m.id); } }
-    for (const mo of bad.filter(r => r.phase !== 'anti' && !seen.has(r.m.id)).slice(0, 4)) { if (i >= NODES - API_SLOTS) break; placeModel(mo, i++); }
+    for (const mo of bad.filter(r => r.phase !== 'stripped' && !seen.has(r.m.id)).slice(0, 4)) { if (i >= NODES - API_SLOTS) break; placeModel(mo, i++); }
     refresh();
     fitView();
-    syncTimeline(); syncYAxis();
+    syncTimeline(); syncYAxis(); syncView();
     if (!cxStat.classList.contains('ok')) idleStatus();
   }
 
@@ -572,7 +572,7 @@
   const FS_SCENE = `
 precision highp float;
 uniform vec2 R;
-uniform float T, Glitch, Lum, Ey, Net, Ignite, Zoom, Cls, VX, NS;
+uniform float T, Glitch, Lum, Ey, Net, Ignite, Zoom, Cls, VX, NS, Flat;
 uniform sampler2D Nodes;
 uniform vec2 PTR, PAN;
 
@@ -609,20 +609,20 @@ void main(){
   /* below the plane: a faint red haze, nothing more */
   float ab = smoothstep(Ey,Ey-.3,puv.y);
   float mass = fbm2(puv*vec2(5.,2.6)+vec2(T*.05,0.));
-  lum += ab*mass*.02;
-  threat += ab*mass*.05;
+  lum += ab*mass*.02*Flat;
+  threat += ab*mass*.05*Flat;
 
   /* the certification plane — a thin line with a soft glow */
   float pd = abs(puv.y-Ey)*Zoom;
-  lum += (exp(-pd*70.)*.1 + exp(-pd*20.)*.03)*clamp(Ignite*2.,0.,1.)*smoothstep(.0,.04,puv.x)*smoothstep(1.,.96,puv.x);
+  lum += (exp(-pd*70.)*.1 + exp(-pd*20.)*.03)*clamp(Ignite*2.,0.,1.)*smoothstep(.0,.04,puv.x)*smoothstep(1.,.96,puv.x)*Flat;
 
   /* the re-classification sweep */
   float sx = Ignite*1.14-.04;
   float scanVis = clamp((1.-Net)*(1.06-Ignite)*3.,0.,1.)*step(.19,Ignite);
-  lum += (exp(-abs(puv.x-sx)*70.)*.3 + exp(-abs(puv.x-sx)*14.)*.05)*scanVis;
+  lum += (exp(-abs(puv.x-sx)*70.)*.3 + exp(-abs(puv.x-sx)*14.)*.05)*scanVis*Flat;
 
   /* graticule — barely there */
-  lum += (smoothstep(.485,.5,abs(fract(puv.x*10.)-.5)) + smoothstep(.485,.5,abs(fract(puv.y*7.)-.5)))*.012;
+  lum += (smoothstep(.485,.5,abs(fract(puv.x*10.)-.5)) + smoothstep(.485,.5,abs(fract(puv.y*7.)-.5)))*.012*Flat;
 
   /* star auras — the glyph field warms around each star */
   float classInk = 0., auraSum = 0.;
@@ -641,7 +641,7 @@ void main(){
     if(nb.g>.5) threat+=aura*.4;
   }
 
-  lum += min(auraSum,.11);   // a cluster warms the field, never fills it
+  lum += min(auraSum,.11)*Flat;   // a cluster warms the field, never fills it
 
   /* decrypt band — only while the sweep glitches */
   lum += exp(-abs(uv.y-.5)*24.)*Glitch*step(.93,h2(vec2(cell.x,floor(T*7.))))*.5;
@@ -654,19 +654,28 @@ void main(){
      Shape says openness: filled = open weights, hollow ring = API-only,
      red-rimmed = restricted. Size grows with class; rings mark hover/selection. */
   const VS_PTS = `
-attribute vec2 aPos;
-attribute vec4 aDat;   // class 1..10, kind (0 open original · 1 API-only · 2 restricted · 3 census dust · 4 cluster · 5 anti-certified · 6 open derivative), state (0 · 1 hover · 2 selected | cluster: member count), flare 0..1
-uniform float Zoom, VX, Dpr, MaxPt, Cls, T;
+attribute vec3 aPos;   // world x, y, z (z only used in 3D)
+attribute vec4 aDat;   // class 1..10, kind (0 open original · 1 API-only · 2 restricted · 3 census dust · 4 cluster · 5 safety-stripped · 6 open derivative), state (0 · 1 hover · 2 selected | cluster: member count), flare 0..1
+uniform float Zoom, VX, Dpr, MaxPt, Cls, T, U3, Ref;
 uniform vec2 PAN, PTR;
+uniform mat4 M3;
 uniform vec3 Pal[10];
 varying vec3 vCol;
 varying vec4 vDat;
 varying float vDim;
 void main(){
-  vec2 uv = (aPos - .5 - PAN - PTR*vec2(.012,.008)) * vec2(Zoom/VX, Zoom) + .5;
-  gl_Position = vec4(uv*2.-1., 0., 1.);
+  float persp = 1., fog = 1.;
+  if (U3 > .5) {
+    gl_Position = M3 * vec4(aPos, 1.);
+    float w = max(gl_Position.w, .05);
+    persp = clamp(Ref / w, .4, 2.6);                 // nearer stars are bigger…
+    fog = clamp(1.45 - w / Ref * .55, .3, 1.);       // …and farther ones fade
+  } else {
+    vec2 uv = (aPos.xy - .5 - PAN - PTR*vec2(.012,.008)) * vec2(Zoom/VX, Zoom) + .5;
+    gl_Position = vec4(uv*2.-1., 0., 1.);
+  }
   float cls = aDat.x, kind = aDat.y;
-  float core = (2.6 + min(cls,7.)*.55) * Dpr * clamp(pow(Zoom,.3), .85, 1.5);
+  float core = (2.6 + min(cls,7.)*.55) * Dpr * (U3 > .5 ? persp : clamp(pow(Zoom,.3), .85, 1.5));
   if (kind > 3.5) core = (4. + sqrt(aDat.z)*1.5) * Dpr;
   else if (kind > 2.5) core = 1.05 * Dpr;
   else {
@@ -680,8 +689,21 @@ void main(){
   for (int i = 0; i < 10; i++) if (i == k) c = Pal[i];
   vCol = c;
   vDat = aDat;
-  vDim = (Cls > .5 && abs(cls - Cls) > .4) ? .12 : 1.;
+  vDim = ((Cls > .5 && abs(cls - Cls) > .4) ? .12 : 1.) * fog;
 }`;
+
+  /* LINE PASS (3D only) — the certification plane as a real plane: its outline,
+     a depth grid, band boundaries, and the y / z axes. */
+  const VS_LN = `
+attribute vec3 aPos;
+attribute vec4 aCol;
+uniform mat4 M3;
+varying vec4 vCol;
+void main(){ gl_Position = M3 * vec4(aPos, 1.); vCol = aCol; }`;
+  const FS_LN = `
+precision mediump float;
+varying vec4 vCol;
+void main(){ gl_FragColor = vec4(vCol.rgb*vCol.a, vCol.a); }`;
   const FS_PTS = `
 precision highp float;
 uniform float T;
@@ -710,7 +732,7 @@ void main(){
     ? smoothstep(1.,.72,r) - smoothstep(.5,.3,r)*.8                       // derivative: a disc with a dark core
     : smoothstep(1.,.72,r);                                               // original open weights: filled disc
   float rim = kind > 1.5 && kind < 2.5 ? smoothstep(.22,.05,abs(r-1.3)) : 0.;   // restricted: red rim
-  float cross = kind > 4.5 && kind < 5.5                                          // anti-certified: a red ✕
+  float cross = kind > 4.5 && kind < 5.5                                          // safety-stripped: a red ✕
     ? (smoothstep(.34,.1,abs(q.x-q.y)) + smoothstep(.34,.1,abs(q.x+q.y)))*step(r,1.9) : 0.;
   rim += cross;
   float halo = exp(-r*1.15)*.5*(1.-smoothstep(4.,6.,r));
@@ -882,7 +904,7 @@ void main(){
   }
 
   /* GL resources — rebuilt from scratch on context restore */
-  let glOK = false, atlasTex, quad, nodeTex, progScene, progStamp, progDisp, progPts, ptsBuf, maxPt = 64, tScene, fbA, fbB;
+  let glOK = false, atlasTex, quad, nodeTex, progScene, progStamp, progDisp, progPts, progLn, ptsBuf, lnBuf, maxPt = 64, tScene, fbA, fbB;
   function allocTargets() {
     const pw = Math.round(W * dpr), ph = Math.round(H * dpr);
     const nc = Math.max(32, Math.round(pw / (CELL_W * dpr))), nr = Math.max(20, Math.round(ph / (CELL_H * dpr)));
@@ -901,6 +923,7 @@ void main(){
       progStamp = program(FS_STAMP);
       progDisp = program(FS_DISPLAY);
       progPts = program(FS_PTS, VS_PTS);
+      progLn = program(FS_LN, VS_LN);
     } catch (e) {
       console.error('[safety.vims] shader:', e.message);
       return;
@@ -910,6 +933,7 @@ void main(){
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     ptsBuf = gl.createBuffer();
+    lnBuf = gl.createBuffer();
     maxPt = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64;
     nodeTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, nodeTex);
@@ -976,7 +1000,7 @@ void main(){
     bubbleLabels.forEach((s, k) => {
       const b = bubbles[k];
       if (!b) { s.style.opacity = 0; return; }
-      const [x, y] = toScreen(b.wx, b.wy);
+      const [x, y] = toScreen(b.wx, b.wy, b.wz);
       s.textContent = b.n;
       s.style.color = CLS_HEX[b.cls - 1];
       s.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`;
@@ -1001,9 +1025,11 @@ void main(){
     ['DOWNLOADS ↑', .008, EY + .28, 'rotate(-90deg) translate(-50%,0)'],
     ['CERTIFICATION PLANE', SPAN0 + .002, EY + .014, 'translate(0,-50%)'],
     ['API · NEWEST ↑', .008, EY + .65, 'rotate(-90deg) translate(-50%,0)'],
-  ].map(([txt, x, y, tf]) => {
+    ['', SPAN1 + .015, EY, 'translate(0,-50%)', 'axis'],
+  ].map(([txt, x, y, tf, z]) => {
     const s = document.createElement('span');
     s.textContent = txt; s.dataset.x = x; s.dataset.y = y; s.dataset.tf = tf;
+    if (z) s.dataset.z = z;
     s.style.cssText = `position:absolute;left:0;top:0;font-size:8.5px;letter-spacing:.24em;color:var(--dim);
       opacity:.7;white-space:nowrap;transform-origin:0 50%;will-change:transform`;
     labelsEl.appendChild(s);
@@ -1039,7 +1065,7 @@ void main(){
         r.innerHTML = `<span class="st"></span><span class="id">· vacant ·</span><span class="cls">—</span>`;
         return;
       }
-      r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (a.phase === 'anti' ? ' anti' : '') + (a.api ? ' api' : '') + (i === selIdx ? ' sel' : '');
+      r.className = 'ro-row' + (a.revoked ? ' rev' : '') + (a.phase === 'stripped' ? ' stripped' : '') + (a.api ? ' api' : '') + (i === selIdx ? ' sel' : '');
       const nm = a.name.split('/').pop();
       r.title = a.name + (a.why ? ' — ' + a.why : '') + (a.api ? ' — API-only' : '');
       r.innerHTML = `<span class="st"></span><span class="id">${esc(nm.length > 18 ? nm.slice(0, 17) + '…' : nm)}</span>${a.api ? '<span class="api-tag">API</span>' : ''}<span class="cls" style="color:${CLS_HEX[a.cls - 1]}">${RN[a.cls - 1]}</span>`;
@@ -1081,10 +1107,59 @@ void main(){
   const pan = { x: 0, y: 0 }, panT = { x: 0, y: 0 };
   let px = 0, py = 0, pxx = 0, pyy = 0;
   const ZMIN = .5, ZMAX = 4;
-  const toScreen = (wx, wy) => [
+  /* ============ 3D — a real star map ============
+     x = class band, y = the y measure, z = a second measure (?z=). The camera
+     orbits a target; zMix eases the depth in and out so switching animates. */
+  const URLQ = new URLSearchParams(location.search);
+  const Z_AXES = { size: 'SIZE', released: 'RELEASED', adoption: 'ADOPTION' };
+  let view3d = URLQ.get('view') === '3d';
+  let zAxis = Z_AXES[URLQ.get('z')] ? URLQ.get('z') : 'size';
+  let zMix = view3d ? 1 : 0;
+  const CAM_HOME = { yaw: -.62, pitch: .3, dist: 2.05, tx: .5, ty: EY + .2, tz: .5 };
+  const CAM_FRONT = { yaw: 0, pitch: 0, dist: 1.75, tx: .5, ty: EY + .2, tz: .5 };
+  /* portrait screens see less sideways: back the camera off so the plot's width fits */
+  const fitDist = c => ({ ...c, dist: c.dist * Math.max(1, Math.pow(1.5 / (innerWidth / innerHeight), .55)) });
+  const cam = fitDist(view3d ? CAM_HOME : CAM_FRONT), camT = { ...cam };
+  const M3 = new Float32Array(16);
+  const ZD = .8;                                   // depth of the z axis in world units
+  const zWorld = v => .5 + ((v < 0 ? 0 : v) - .5) * ZD * zMix;
+  const Z_FRONT = () => .5 + ZD / 2 * zMix;        // the edge nearest the home camera
+  function camMatrix() {
+    const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch), cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+    const ex = cam.tx + cam.dist * cp * sy, ey = cam.ty + cam.dist * sp, ez = cam.tz + cam.dist * cp * cy;
+    let fx = cam.tx - ex, fy = cam.ty - ey, fz = cam.tz - ez;
+    const fl = Math.hypot(fx, fy, fz); fx /= fl; fy /= fl; fz /= fl;
+    let rx = fy * 0 - fz * 1, ry = fz * 0 - fx * 0, rz = fx * 1 - fy * 0;   // f × up(0,1,0)
+    const rl = Math.hypot(rx, ry, rz) || 1; rx /= rl; ry /= rl; rz /= rl;
+    const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
+    const f = 1 / Math.tan(.38), asp = W / H, n = .02, fa = 30;
+    const V = [rx, ux, -fx, 0, ry, uy, -fy, 0, rz, uz, -fz, 0,
+      -(rx * ex + ry * ey + rz * ez), -(ux * ex + uy * ey + uz * ez), fx * ex + fy * ey + fz * ez, 1];
+    const P = [f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (fa + n) / (n - fa), -1, 0, 0, 2 * fa * n / (n - fa), 0];
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+      let v = 0;
+      for (let k = 0; k < 4; k++) v += P[k * 4 + r] * V[c * 4 + k];
+      M3[c * 4 + r] = v;
+    }
+    cam.right = [rx, ry, rz]; cam.up = [ux, uy, uz];
+  }
+  const project = (x, y, z) => {
+    const w = M3[3] * x + M3[7] * y + M3[11] * z + M3[15];
+    if (w <= .01) return [-1e4, -1e4, 0];
+    return [((M3[0] * x + M3[4] * y + M3[8] * z + M3[12]) / w * .5 + .5) * W,
+      (.5 - (M3[1] * x + M3[5] * y + M3[9] * z + M3[13]) / w * .5) * H, w];
+  };
+  const toScreen = (wx, wy, wz = .5) => view3d || zMix > .002 ? project(wx, wy, wz) : [
     (.5 + (wx - .5 - pan.x - px * .012) * zoom / VX) * W,
-    (.5 - (wy - .5 - pan.y - py * .008) * zoom) * H,
+    (.5 - (wy - .5 - pan.y - py * .008) * zoom) * H, 1,
   ];
+  const is3d = () => view3d || zMix > .002;
+  function panCam(dx, dy) {
+    const k = cam.dist * .0011;
+    camT.tx -= (cam.right[0] * dx - cam.up[0] * dy) * k;
+    camT.ty -= (cam.right[1] * dx - cam.up[1] * dy) * k;
+    camT.tz -= (cam.right[2] * dx - cam.up[2] * dy) * k;
+  }
   const clampPan = () => {
     panT.x = clamp(panT.x, -.45, .45);
     panT.y = clamp(panT.y, -.38, .38);
@@ -1100,6 +1175,7 @@ void main(){
   /* fly the camera so node i sits clear of the inspector */
   function flyTo(i) {
     const a = AGENTS[i];
+    if (is3d()) { camT.tx = a.x; camT.ty = a.y; camT.tz = a.wz ?? .5; camT.dist = Math.min(camT.dist, 1.1); return; }
     if (mobile) zoomT = Math.max(zoomT, 1.5);
     const ut = mobile ? .5 : .4, vt = mobile ? .74 : .5;
     panT.x = a.x - .5 - (ut - .5) * VX / zoomT;
@@ -1110,6 +1186,7 @@ void main(){
   function fitView() {
     const live = AGENTS.filter(a => a.used);
     if (!live.length || userCam) return;
+    if (view3d) { Object.assign(camT, fitDist(CAM_HOME)); return; }
     const xs = live.map(a => a.x), ys = live.map(a => a.y);
     const x0 = Math.min(...xs, SPAN0 - .045), x1 = Math.max(...xs, SPAN1 + .015), y0 = Math.min(...ys, EY - .02), y1 = Math.max(...ys, EY + .84);
     const topH = document.querySelector('.top').getBoundingClientRect().bottom;
@@ -1139,7 +1216,7 @@ void main(){
     let best = radius * radius, hit = -1;
     for (const a of AGENTS) {
       if (!a.used || a.hidden || a.future || !inLayers(a) || (filterCls && a.cls !== filterCls)) continue;
-      const [x, y] = toScreen(a.x, a.y);
+      const [x, y] = toScreen(a.x, a.y, a.wz);
       const d = (x - sx) ** 2 + (y - sy) ** 2;
       if (d < best) { best = d; hit = a.i; }
     }
@@ -1161,8 +1238,11 @@ void main(){
     cv.setPointerCapture(e.pointerId);
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.size === 1) movedPx = 0;
-    if (ptrs.size === 2) { const [mx, my, d] = mid(); pinch = { mx, my, d, z: zoomT }; movedPx = 99; }
+    if (ptrs.size === 2) { const [mx, my, d] = mid(); pinch = { mx, my, d, z: zoomT, dist: camT.dist }; movedPx = 99; }
+    orbitPan = e.button === 2 || e.shiftKey;
   });
+  let orbitPan = false;
+  cv.addEventListener('contextmenu', e => { if (is3d()) e.preventDefault(); });
   cv.addEventListener('pointermove', e => {
     if (e.pointerType === 'mouse') {
       pxx = e.clientX / W - .5; pyy = e.clientY / H - .5;
@@ -1173,7 +1253,18 @@ void main(){
     if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     p.x = e.clientX; p.y = e.clientY;
-    if (ptrs.size === 1) {
+    if (ptrs.size === 1 && is3d()) {
+      movedPx += Math.abs(dx) + Math.abs(dy);
+      if (movedPx > 8) userCam = true;
+      if (orbitPan) panCam(dx, dy);
+      else { camT.yaw -= dx * .006; camT.pitch = clamp(camT.pitch + dy * .005, -1.1, 1.4); }
+    } else if (pinch && is3d()) {
+      const [mx, my, d] = mid();
+      panCam(mx - pinch.mx, my - pinch.my);
+      pinch.mx = mx; pinch.my = my;
+      camT.dist = clamp(pinch.dist * pinch.d / d, .35, 9);
+      userCam = true;
+    } else if (ptrs.size === 1) {
       movedPx += Math.abs(dx) + Math.abs(dy);
       if (movedPx > 8) userCam = true;
       panT.x -= dx * VX / (W * zoomT);
@@ -1193,16 +1284,23 @@ void main(){
     if (ptrs.size < 2) pinch = null;
     if (ptrs.size || e.type === 'pointercancel' || movedPx >= 8) return;
     const b = pickBubble(e.clientX, e.clientY);
-    if (b) { userCam = true; zoomAt(e.clientX, e.clientY, zoomT * 2.4); return; }
+    if (b) {
+      userCam = true;
+      if (is3d()) { camT.tx = b.wx; camT.ty = b.wy; camT.tz = b.wz; camT.dist = Math.max(.35, camT.dist * .5); }
+      else zoomAt(e.clientX, e.clientY, zoomT * 2.4);
+      return;
+    }
     const hit = pick(e.clientX, e.clientY, e.pointerType === 'mouse' ? 22 : 34);
     select(hit, hit >= 0 && mobile);
   };
   cv.addEventListener('pointerup', release);
   cv.addEventListener('pointercancel', release);
+  cv.addEventListener('dblclick', () => { userCam = false; if (view3d) Object.assign(camT, fitDist(CAM_HOME)); else fitView(); });
   cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { hoverIdx = -1; pxx = pyy = 0; } });
   cv.addEventListener('wheel', e => {
     e.preventDefault();
-    zoomAt(e.clientX, e.clientY, zoomT * Math.exp(-e.deltaY * .0011));
+    if (is3d()) camT.dist = clamp(camT.dist * Math.exp(e.deltaY * .0011), .35, 9);
+    else zoomAt(e.clientX, e.clientY, zoomT * Math.exp(-e.deltaY * .0011));
     userCam = true;
   }, { passive: false });
 
@@ -1396,7 +1494,7 @@ void main(){
       `<div class="in-row"><span>LICENSE</span><b>${a.license || '—'}</b></div>` +
       `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
       `<div class="in-row"><span>SIZE</span><b>${a.paramsB ? fmtB(a.paramsB) + ' params' : '—'} · ${esc(BASIS_LABEL(a.basis))}</b></div>` +
-      `<div class="in-row"><span>PHASE</span><b class="${a.phase === 'anti' ? 'bad' : ''}">${esc(PHASE[a.phase || 'original'].label)} · ${esc(a.phaseWhy || '')}${a.teacher ? ` · teacher ${esc(a.teacher)}` : ''}</b></div>` +
+      `<div class="in-row"><span>PHASE</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">${esc(PHASE[a.phase || 'original'].label)} · ${esc(a.phaseWhy || '')}${a.teacher ? ` · teacher ${esc(a.teacher)}` : ''}</b></div>` +
       lineageRows(a) +
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
       `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
@@ -1677,7 +1775,7 @@ void main(){
   $('lg-rows').innerHTML = CLASSES.map((k, i) =>
     `<button type="button" class="lg-row${k.reserved ? ' rsv' : ''}" data-c="${i + 1}" aria-pressed="false"><i style="--c:${k.hex}"></i>${k.rn} · ${k.name}<span class="n"></span></button>`).join('');
   $('lg-layers').innerHTML = PHASES.map(p =>
-    `<button type="button" class="ly-row${p.id === 'anti' ? ' anti' : ''}" data-ph="${p.id}" aria-pressed="${!hiddenPhases.has(p.id)}" title="${esc(p.label.toLowerCase())} — ${esc(p.note)}"><i></i>${p.short}<span class="n"></span></button>`).join('');
+    `<button type="button" class="ly-row${p.id === 'stripped' ? ' stripped' : ''}" data-ph="${p.id}" aria-pressed="${!hiddenPhases.has(p.id)}" title="${esc(p.label.toLowerCase())} — ${esc(p.note)}"><i></i>${p.short}<span class="n"></span></button>`).join('');
   $('lg-layers').addEventListener('click', e => {
     const b = e.target.closest('.ly-row');
     if (!b) return;
@@ -1783,10 +1881,39 @@ void main(){
   yBtns.forEach(b => b.addEventListener('click', () => {
     if (b.dataset.y === yAxis) return;
     yAxis = b.dataset.y;
-    syncYAxis(); refresh(); syncUrl();
+    if (zAxis === yAxis) zAxis = Object.keys(Z_AXES).find(k => k !== yAxis);
+    syncYAxis(); syncView(); refresh(); syncUrl();
   }));
+  /* 2D / 3D + the z measure */
+  const Z_CAPTION = { size: 'Z · SIZE → LARGER', released: 'Z · RELEASED → NEWER', adoption: 'Z · ADOPTION → MORE DOWNLOADS' };
+  const viewBtns = [...document.querySelectorAll('#view-mode [data-view]')], zBtns = [...document.querySelectorAll('#z-axis [data-z]')];
+  function syncView() {
+    viewBtns.forEach(b => b.setAttribute('aria-pressed', String((b.dataset.view === '3d') === view3d)));
+    $('z-axis').hidden = !view3d;
+    zBtns.forEach(b => { b.setAttribute('aria-pressed', String(b.dataset.z === zAxis)); b.disabled = b.dataset.z === yAxis; });
+    axes[4].textContent = Z_CAPTION[zAxis];
+    document.body.classList.toggle('is3d', view3d);
+  }
+  function setView(three) {
+    if (three === view3d) return;
+    view3d = three;
+    if (zAxis === yAxis) zAxis = Object.keys(Z_AXES).find(k => k !== yAxis);
+    if (three) { Object.assign(cam, fitDist(CAM_FRONT)); Object.assign(camT, fitDist(CAM_HOME)); userCam = false; refresh(); }
+    else { Object.assign(camT, fitDist(CAM_FRONT)); userCam = false; fitView(); }
+    syncView(); syncUrl();
+  }
+  viewBtns.forEach(b => b.addEventListener('click', () => setView(b.dataset.view === '3d')));
+  zBtns.forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.z === zAxis || b.dataset.z === yAxis) return;
+    zAxis = b.dataset.z; refresh(); syncView(); syncUrl();
+  }));
+  addEventListener('keydown', e => {
+    if (e.key !== '3' || e.target.closest('input,textarea,[contenteditable]')) return;
+    setView(!view3d);
+  });
   function syncUrl() {
     const u = new URL(location.href);
+    if (view3d) { u.searchParams.set('view', '3d'); u.searchParams.set('z', zAxis); } else { u.searchParams.delete('view'); u.searchParams.delete('z'); }
     if (yAxis !== 'adoption') u.searchParams.set('y', yAxis); else u.searchParams.delete('y');
     if (asOf) u.searchParams.set('asof', fmtMonth(asOf)); else u.searchParams.delete('asof');
     if (hiddenPhases.size) u.searchParams.set('hide', [...hiddenPhases].join(',')); else u.searchParams.delete('hide');
@@ -1847,8 +1974,17 @@ void main(){
   }
   function layoutAdoption() {
     const live = AGENTS.filter(a => a.used);
-    const ys = yLayout(live.map(a => ({ api: a.api, bad: a.revoked, dl: a.downloads, date: a.date, size: a.paramsB, seed: a.i })));
-    live.forEach((a, k) => { a.y = ys[k]; });
+    const items = live.map(a => ({ api: a.api, bad: a.revoked, dl: a.downloads, date: a.date, size: a.paramsB, seed: a.i }));
+    const ys = yLayout(items), zs = zLayout(items);
+    live.forEach((a, k) => { a.y = ys[k]; a.zv = zs[k]; });
+  }
+  /* z: the second measure, 0 (back) … 1 (front). Unknowns — API-only sizes and
+     download counts, undated repos — sit on the back wall at 0. */
+  function zLayout(items) {
+    if (zAxis === 'size') return items.map(o => Math.max(0, logSize(o.size)));
+    if (zAxis === 'released') { const r = ranker(items.map(o => o.date)); return items.map(o => o.date ? r(o.date) : 0); }
+    const r = ranker(items.map(o => o.api ? 0 : o.dl));
+    return items.map(o => !o.api && o.dl ? r(o.dl) : 0);
   }
   let registryTotal = 0;
   function layoutBands() {
@@ -1877,10 +2013,11 @@ void main(){
   function layoutDust() {
     const plotted = new Set(AGENTS.filter(a => a.used).map(a => a.name));
     const rest = census.filter(r => !plotted.has(r.m.id));
-    const ys = yLayout(rest.map(r => ({ api: !!r.api, bad: !!r.unsafe, dl: r.downloads, date: recDate(r), size: r.paramsB || 0, seed: nameHash(r.m.id) * 997 })));
+    const items = rest.map(r => ({ api: !!r.api, bad: !!r.unsafe, dl: r.downloads, date: recDate(r), size: r.paramsB || 0, seed: nameHash(r.m.id) * 997 }));
+    const ys = yLayout(items), zs = zLayout(items);
     dust = rest.map((r, k) => {
       const h = nameHash(r.m.id), f = .5 * clamp(bandFrac(r), 0, 1) + .5 * h;
-      return { x: bandX(r.cls, f), y: ys[k], cls: r.cls, date: recDate(r), phase: r.phase || 'original' };
+      return { x: bandX(r.cls, f), y: ys[k], zv: zs[k], cls: r.cls, date: recDate(r), phase: r.phase || 'original' };
     });
   }
   function refresh() {
@@ -1914,6 +2051,11 @@ void main(){
     px = lerp(px, pxx, .05); py = lerp(py, pyy, .05);
     zoom = lerp(zoom, zoomT, .09 * df);
     pan.x = lerp(pan.x, panT.x, .12 * df); pan.y = lerp(pan.y, panT.y, .12 * df);
+    zMix = reducedMotion ? +view3d : lerp(zMix, +view3d, Math.min(1, .07 * df));
+    if (Math.abs(zMix - +view3d) < .002) zMix = +view3d;
+    for (const k of ['yaw', 'pitch', 'dist', 'tx', 'ty', 'tz']) cam[k] = reducedMotion ? camT[k] : lerp(cam[k], camT[k], Math.min(1, .1 * df));
+    camMatrix();
+    for (const a of AGENTS) if (a.used) a.wz = zWorld(a.zv ?? 0);
     if (birthT < 5) birthT += dt; else if (birthIdx >= 0) birthIdx = -1;
     clock = t;
     stepTimeline(now || performance.now());
@@ -1950,6 +2092,7 @@ void main(){
     gl.uniform1f(u.VX, VX);
     gl.uniform1f(u.NS, mobile ? .6 : .82);
     gl.uniform1f(u.Cls, filterCls);
+    gl.uniform1f(u.Flat, is3d() ? Math.max(0, 1 - zMix * 4) : 1);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, nodeTex);
     gl.uniform1i(u.Nodes, 3);
     gl.uniform2f(u.PTR, px, py);
@@ -1986,8 +2129,53 @@ void main(){
     gl.uniform1f(progDisp.u.Roll, W < 700 || reducedMotion ? 0 : 1);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
+    if (is3d()) drawGrid();
     drawPoints(t);
     const tmp = fbA; fbA = fbB; fbB = tmp;
+  }
+
+  /* pass 3b (3D) — the plane, its depth grid, band boundaries, the axes */
+  const lnData = [];
+  function drawGrid() {
+    lnData.length = 0;
+    const z0 = zWorld(0), z1 = zWorld(1), a = zMix;
+    const seg = (x0, y0, za, x1, y1, zb, r, g, b, al) => lnData.push(x0, y0, za, r, g, b, al * a, x1, y1, zb, r, g, b, al * a);
+    // plane outline + depth grid (quarters of the z measure)
+    seg(SPAN0, EY, z0, SPAN1, EY, z0, .84, .93, .89, .55);
+    seg(SPAN0, EY, z1, SPAN1, EY, z1, .84, .93, .89, .75);
+    for (const q of [.25, .5, .75]) seg(SPAN0, EY, zWorld(q), SPAN1, EY, zWorld(q), .25, .85, .7, .16);
+    // band boundaries run front to back across the plane
+    for (let k = 0; k <= NCLS; k++) {
+      const x = k < NCLS ? BAND[k].x0 : SPAN1, rsv = k > ACTIVE && k < NCLS;
+      seg(x, EY, z0, x, EY, z1, rsv ? .54 : .25, rsv ? .49 : .85, rsv ? 1 : .7, k === 0 || k === NCLS ? .55 : .22);
+    }
+    // y axis up the back-left corner; a faint wall where unknowns sit (z = 0)
+    seg(SPAN0, EY - .3, z0, SPAN0, EY + .78, z0, .84, .93, .89, .35);
+    seg(SPAN1, EY - .3, z0, SPAN1, EY + .78, z0, .84, .93, .89, .12);
+    seg(SPAN0, EY + .78, z0, SPAN1, EY + .78, z0, .84, .93, .89, .08);
+    // z axis along the right edge of the plane, toward the viewer
+    seg(SPAN1 + .015, EY, z0, SPAN1 + .015, EY, z1, .25, .85, .7, .7);
+    // drop lines: the selected star to the plane, so its depth reads
+    const s = selIdx >= 0 ? AGENTS[selIdx] : null;
+    if (s && s.used) {
+      seg(s.x, s.y, s.wz, s.x, EY, s.wz, 1, 1, 1, .45);
+      seg(s.x, EY, s.wz, SPAN1 + .015, EY, s.wz, 1, 1, 1, .18);
+    }
+    const p = progLn;
+    gl.useProgram(p.p);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lnBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lnData), gl.DYNAMIC_DRAW);
+    const aPos = gl.getAttribLocation(p.p, 'aPos'), aCol = gl.getAttribLocation(p.p, 'aCol');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 28, 0);
+    gl.enableVertexAttribArray(aCol);
+    gl.vertexAttribPointer(aCol, 4, gl.FLOAT, false, 28, 12);
+    gl.uniformMatrix4fv(p.u.M3, false, M3);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.LINES, 0, lnData.length / 7);
+    gl.disable(gl.BLEND);
+    gl.disableVertexAttribArray(aCol);
   }
 
   /* pass 4 — the stars, rebuilt each frame: census dust, cluster bubbles, single stars */
@@ -2002,7 +2190,7 @@ void main(){
     const cells = new Map();
     for (const a of AGENTS) {
       if (!a.used || a.future || !inLayers(a) || a.i === selIdx || a.i === hoverIdx || (filterCls && a.cls !== filterCls)) continue;
-      const [x, y] = toScreen(a.x, a.y);
+      const [x, y] = toScreen(a.x, a.y, a.wz);
       const k = `${Math.floor(x / CLUSTER_PX)},${Math.floor(y / CLUSTER_PX)}`;
       (cells.get(k) || cells.set(k, []).get(k)).push(a);
     }
@@ -2012,54 +2200,56 @@ void main(){
       const tally = {};
       for (const a of m) { a.hidden = true; tally[a.cls] = (tally[a.cls] || 0) + 1; }
       const cls = +Object.entries(tally).sort((p, q) => q[1] - p[1])[0][0];
-      const wx = m.reduce((v, a) => v + a.x, 0) / m.length, wy = m.reduce((v, a) => v + a.y, 0) / m.length;
-      bubbles.push({ wx, wy, cls, n: m.length });
+      const avg = k => m.reduce((v, a) => v + a[k], 0) / m.length;
+      bubbles.push({ wx: avg('x'), wy: avg('y'), wz: avg('wz'), cls, n: m.length });
     }
   }
   function pickBubble(sx, sy) {
     for (const b of bubbles) {
-      const [x, y] = toScreen(b.wx, b.wy), r = 4 + Math.sqrt(b.n) * 1.5 + 6;
+      const [x, y] = toScreen(b.wx, b.wy, b.wz), r = 4 + Math.sqrt(b.n) * 1.5 + 6;
       if ((x - sx) ** 2 + (y - sy) ** 2 < r * r) return b;
     }
     return null;
   }
+  const PT = 7;   // floats per point: x y z · class kind state flare
+  const ptList = [];
   function drawPoints(t) {
     clusterStars();
-    const need = (NODES + dust.length + bubbles.length) * 6;
-    if (ptsData.length < need) ptsData = new Float32Array(need);
-    let n = 0;
+    ptList.length = 0;
     for (const d of dust) {
       if ((asOf && d.date > asOf) || hiddenPhases.has(d.phase)) continue;
-      const o = n++ * 6;
-      ptsData[o] = d.x; ptsData[o + 1] = d.y; ptsData[o + 2] = d.cls; ptsData[o + 3] = 3; ptsData[o + 4] = 0; ptsData[o + 5] = 0;
+      ptList.push([d.x, d.y, zWorld(d.zv ?? 0), d.cls, 3, 0, 0]);
     }
-    for (const b of bubbles) {
-      const o = n++ * 6;
-      ptsData[o] = b.wx; ptsData[o + 1] = b.wy; ptsData[o + 2] = b.cls; ptsData[o + 3] = 4; ptsData[o + 4] = b.n; ptsData[o + 5] = 0;
-    }
+    for (const b of bubbles) ptList.push([b.wx, b.wy, b.wz, b.cls, 4, b.n, 0]);
     for (const a of AGENTS) {
       if (!a.used || a.hidden || a.future || !inLayers(a)) continue;
-      const o = n++ * 6;
-      ptsData[o] = a.x; ptsData[o + 1] = a.y; ptsData[o + 2] = a.cls;
-      ptsData[o + 3] = a.api ? 1 : a.phase === 'anti' ? 5 : a.revoked ? 2 : a.phase === 'original' ? 0 : 6;
-      ptsData[o + 4] = a.i === selIdx ? 2 : a.i === hoverIdx ? 1 : 0;
-      ptsData[o + 5] = reducedMotion ? 0 : a.i === birthIdx && birthT < 2.5 ? 1 - birthT / 2.5 : a.bornT != null && clock - a.bornT < 1.6 ? 1 - (clock - a.bornT) / 1.6 : 0;
+      ptList.push([a.x, a.y, a.wz ?? .5, a.cls,
+        a.api ? 1 : a.phase === 'stripped' ? 5 : a.revoked ? 2 : a.phase === 'original' ? 0 : 6,
+        a.i === selIdx ? 2 : a.i === hoverIdx ? 1 : 0,
+        reducedMotion ? 0 : a.i === birthIdx && birthT < 2.5 ? 1 - birthT / 2.5 : a.bornT != null && clock - a.bornT < 1.6 ? 1 - (clock - a.bornT) / 1.6 : 0]);
     }
+    const n = ptList.length;
     if (!n) return;
+    /* in 3D, far to near so nearer stars composite over farther ones */
+    if (is3d()) ptList.sort((p, q) => (M3[3] * q[0] + M3[7] * q[1] + M3[11] * q[2]) - (M3[3] * p[0] + M3[7] * p[1] + M3[11] * p[2]));
+    if (ptsData.length < n * PT) ptsData = new Float32Array(n * PT * 1.5 | 0);
+    ptList.forEach((p, k) => ptsData.set(p, k * PT));
     const p = progPts, u = p.u;
     gl.useProgram(p.p);
     gl.bindBuffer(gl.ARRAY_BUFFER, ptsBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, ptsData.subarray(0, n * 6), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, ptsData.subarray(0, n * PT), gl.DYNAMIC_DRAW);
     syncBubbleLabels();
     const aPos = gl.getAttribLocation(p.p, 'aPos'), aDat = gl.getAttribLocation(p.p, 'aDat');
     gl.enableVertexAttribArray(aPos);
-    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 24, 0);
+    gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, PT * 4, 0);
     gl.enableVertexAttribArray(aDat);
-    gl.vertexAttribPointer(aDat, 4, gl.FLOAT, false, 24, 8);
+    gl.vertexAttribPointer(aDat, 4, gl.FLOAT, false, PT * 4, 12);
     gl.uniform1f(u.Zoom, zoom); gl.uniform1f(u.VX, VX); gl.uniform1f(u.Dpr, dpr); gl.uniform1f(u.MaxPt, maxPt);
     gl.uniform1f(u.Cls, filterCls); gl.uniform1f(u.T, reducedMotion ? 0 : t);
     gl.uniform2f(u.PAN, pan.x, pan.y); gl.uniform2f(u.PTR, px, py);
     gl.uniform3fv(u.Pal, PAL);
+    gl.uniform1f(u.U3, is3d() ? 1 : 0); gl.uniform1f(u.Ref, cam.dist);
+    gl.uniformMatrix4fv(u.M3, false, M3);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.POINTS, 0, n);
@@ -2093,27 +2283,28 @@ void main(){
       lineageSvg.replaceChildren(...links.map(([, dir]) => { const l = document.createElementNS(SVGNS, 'line'); l.setAttribute('class', dir); return l; }));
       lineageKey = key;
     }
-    const [ax, ay] = toScreen(a.x, a.y);
+    const [ax, ay] = toScreen(a.x, a.y, a.wz);
     links.forEach(([b], k) => {
-      const [bx, by] = toScreen(b.x, b.y), l = lineageSvg.children[k];
+      const [bx, by] = toScreen(b.x, b.y, b.wz), l = lineageSvg.children[k];
       l.setAttribute('x1', ax); l.setAttribute('y1', ay); l.setAttribute('x2', bx); l.setAttribute('y2', by);
     });
   }
   function placeLabels() {
+    const zf = Z_FRONT(), flat = !is3d();
     for (const s of labels) {
       const c = +s.dataset.c;
-      const [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
+      const [x, y] = toScreen(+s.dataset.x, +s.dataset.y, zf);
       s.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
       s.style.opacity = !glOK ? 0 : filterCls && c !== filterCls ? .12 : 1;
     }
     {
       const [rx] = toScreen(BAND[ACTIVE].x0 + (NCLS - ACTIVE) * RSV_W / 2, 0), [, ry] = toScreen(0, EY + .76);
       rsvCap.style.transform = `translate(${rx}px,${ry}px) translate(-50%,-260%)`;
-      rsvCap.style.opacity = glOK ? .6 : 0;
+      rsvCap.style.opacity = glOK && flat ? .6 : 0;
       const [lx0, ly] = toScreen(SPAN0, EY), [lx1] = toScreen(SPAN1, EY);
       planeLine.style.transform = `translate(${lx0}px,${ly}px)`;
       planeLine.style.width = Math.max(0, lx1 - lx0) + 'px';
-      planeLine.style.opacity = glOK ? 1 : 0;
+      planeLine.style.opacity = glOK && flat ? 1 : 0;
     }
     drawLineage();
     /* band edges span the plot only, not the header or the panels' margins */
@@ -2121,17 +2312,19 @@ void main(){
     for (const d of bandEdges) {
       d.style.transform = `translate(${toScreen(+d.dataset.x, 0)[0]}px,${yTop}px)`;
       d.style.height = Math.max(0, yBot - yTop) + 'px';
+      d.style.visibility = flat ? '' : 'hidden';
     }
     {
       const [bx, by] = toScreen(SPAN1 + .008, EY + .2);
       beyond.style.transform = `translate(${bx}px,${by}px) rotate(-90deg)`;
-      beyond.style.opacity = glOK ? .55 : 0;
+      beyond.style.opacity = glOK && flat ? .55 : 0;
     }
     for (const s of axes) {
-      let [x, y] = toScreen(+s.dataset.x, +s.dataset.y);
-      x = s === axes[0] ? Math.min(x, W - 12) : Math.max(x, 12);
+      const z = s.dataset.z === 'axis' ? .5 : zf;
+      let [x, y] = toScreen(+s.dataset.x, +s.dataset.y, s.dataset.z === 'axis' ? zWorld(1) + .04 : z);
+      if (s.dataset.z !== 'axis') x = s === axes[0] ? Math.min(x, W - 12) : Math.max(x, 12);
       s.style.transform = `translate(${x}px,${y}px) ${s.dataset.tf}`;
-      s.style.opacity = glOK ? .7 : 0;
+      s.style.opacity = !glOK ? 0 : s.dataset.z === 'axis' ? .8 * zMix : .7;
     }
     order.length = 0;
     if (selIdx >= 0) order.push(selIdx);
@@ -2145,7 +2338,7 @@ void main(){
       const hot = i === selIdx || i === hoverIdx;
       let vis = 0;
       if (a.used && glOK && !a.hidden && !a.future && inLayers(a) && !(filterCls && a.cls !== filterCls) && (hot || nLabels < budget)) {
-        const [x, y] = toScreen(a.x, a.y);
+        const [x, y] = toScreen(a.x, a.y, a.wz);
         const w = s.textContent.length * 6.3 + 6, l = clamp(x, w / 2 + 2, W - w / 2 - 2) - w / 2, tp = y + 8;
         const onScreen = x > 4 && x < W - 4 && y > headerBottom && y < H - 20;
         if (onScreen && (hot || !rects.some(r => l < r[2] && l + w > r[0] && tp < r[3] && tp + LB_H > r[1]))) {
