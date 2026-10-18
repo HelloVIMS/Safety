@@ -62,7 +62,7 @@
      not the slot. Empty slots draw nothing. */
   const EY = .34, ZOOM = 1.05;
   const AGENTS = [];
-  const NODES = 192, API_SLOTS = 64;
+  const NODES = 240, API_SLOTS = 64;
   /* honoured everywhere motion is decorative: no sweep, glitch, roll, twinkle or flare */
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   for (let i = 0; i < NODES; i++) AGENTS.push({ i, used: false, cls: 0, x: 0, y: 0, name: '', revoked: false, tools: [] });
@@ -96,6 +96,7 @@
     a.source = 'huggingface'; a.steps = mo.steps; a.gated = mo.m.gated || false; a.files = undefined;
     a.license = a.api ? 'proprietary — provider API terms' : (mo.m.tags || []).find(t => t.startsWith('license:'))?.slice(8) || '—';
     a.phase = mo.phase || 'original'; a.phaseWhy = mo.phaseWhy || ''; a.teacher = mo.teacher || null;
+    a.hosted = a.api ? null : hostedBy.get(a.name.toLowerCase()) || null;
     a.why = a.phase === 'stripped' ? 'safety-stripped — safety training removed' : mo.m.gated ? 'restricted — license-gated' : (mo.unsafe ? 'unsafe serialization — no safetensors' : null);
     a.hash = '';
     const name = a.name;
@@ -298,6 +299,14 @@
   }
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
+  /* Hosted: the open models a public API serves — Featherless.ai's catalog
+     (the host behind routers such as DemonRoute). A safety-stripped model on
+     a public API is one anyone can call: it's out of containment. */
+  const HOSTED_SRC = 'https://api.featherless.ai/v1/models';
+  let hostedBy = new Map(), hosted = { provider: 'Featherless', total: 0, snapshot: '' };
+  const hostedRec = e => ({ id: e.id, tags: e.tags || [], pipeline_tag: e.pt || 'text-generation', gated: e.gated || false, downloads: e.dl || 0, likes: e.likes || 0,
+    createdAt: e.createdAt || (e.created ? new Date(e.created * 1000).toISOString() : ''), ...(e.st ? { safetensors: { total: e.st } } : {}) });
+
   /* every ingested record — plotted or not — is searchable */
   let census = [];
   function fillRegistry(recs) {
@@ -319,8 +328,12 @@
     for (let c = 1; c <= NCLS && i < 40; c++) for (const mo of byCls(c).slice(0, 8)) { if (i >= 40) break; placeModel(mo, i++); }
     /* every phase layer gets representatives — the community layers rank low by downloads */
     const seen = new Set(AGENTS.filter(a => a.used).map(a => a.name));
-    for (const [ph, k] of [['stripped', 14], ['distilled', 8], ['merge', 6], ['adapter', 4], ['community', 8], ['quantized', 8]]) {
-      for (const mo of recs.filter(r => r.phase === ph && !seen.has(r.m.id)).slice(0, k)) {
+    /* below the plane: the safety-stripped models a public API serves come first */
+    const rank = ph => ph === 'stripped' ? (p, q) => (hostedBy.has(q.m.id.toLowerCase()) - hostedBy.has(p.m.id.toLowerCase())) || (q.downloads - p.downloads) : null;
+    for (const [ph, k] of [['stripped', 48], ['distilled', 8], ['merge', 6], ['adapter', 4], ['community', 8], ['quantized', 8]]) {
+      const pool = recs.filter(r => r.phase === ph && !seen.has(r.m.id));
+      if (rank(ph)) pool.sort(rank(ph));
+      for (const mo of pool.slice(0, k)) {
         if (i >= NODES - API_SLOTS - 4) break;
         placeModel(mo, i++); seen.add(mo.m.id);
       }
@@ -333,19 +346,24 @@
     if (!cxStat.classList.contains('ok')) idleStatus();
   }
 
+  let hostedSnap = [];
   async function loadRegistry() {
     /* 0 — the evidence register (sourced claims for VII–X) */
     try { register = (await fetch('evidence.json').then(r => r.json())).entries || []; } catch { register = []; }
     /* 1 — bundled snapshot of real model records: the map is never empty */
     try {
       const snap = await fetch('catalog.json').then(r => r.json());
+      if (snap.hosted) {
+        hosted = { provider: snap.hosted.provider, total: snap.hosted.total, snapshot: snap.hosted.snapshot };
+        for (const e of snap.hosted.stripped) hostedBy.set(e.id.toLowerCase(), hosted.provider);
+      }
       const recs = snap.models.map(e => {
         const m2 = { id: e.id, tags: e.tags || [], pipeline_tag: e.pt, gated: e.gated, downloads: e.dl };
         return { m: m2, ...classifyModel(m2), downloads: e.dl || 0 };
-      }).concat((snap.api || []).map(apiRec));
+      }).concat(classifyAll((snap.hosted?.stripped || []).map(hostedRec)), (snap.api || []).map(apiRec));
+      hostedSnap = snap.hosted?.stripped || [];
       loadNvidia(snap.nvidia || [], snap.nvidia_snapshot);
       fillRegistry(recs);
-      $('st-src').textContent = 'SNAPSHOT';
     } catch { }
     /* 2 — live pull upgrades the registry when the hub is reachable */
     try {
@@ -368,10 +386,17 @@
         'filter=merge&sort=downloads&direction=-1&limit=30',
         'filter=lora&sort=downloads&direction=-1&limit=20',
       ].map(q => `https://huggingface.co/api/models?${q}${HF_FIELDS}`);
-      const [lists, or] = await Promise.all([
+      const [lists, or, fl] = await Promise.all([
         Promise.all(urls.map(u => fetch(u).then(r => r.json()))),
         fetch('https://openrouter.ai/api/v1/models').then(r => r.json()).catch(() => null),
+        fetch(HOSTED_SRC).then(r => r.json()).catch(() => null),
       ]);
+      /* every model the host serves is marked; its safety-stripped ones join the registry */
+      const flData = fl?.data || [];
+      if (flData.length) {
+        hostedBy = new Map(flData.map(m => [m.id.toLowerCase(), hosted.provider]));
+        hosted = { ...hosted, total: flData.length, snapshot: 'live' };
+      }
       const orData = or?.data || [];
       orByHf = new Map(orData.filter(m => m.hugging_face_id).map(m => [m.hugging_face_id.toLowerCase(), m.id]));
       const seen = new Set(), raw = [];
@@ -380,10 +405,16 @@
         seen.add(m.id);
         raw.push(m);
       }
+      const snapById = new Map(hostedSnap.map(e => [e.id.toLowerCase(), e]));
+      const lower = new Set([...seen].map(x => x.toLowerCase()));
+      for (const m of (flData.length ? flData.filter(x => STRIP_RE.test(x.id)) : hostedSnap)) {
+        if (lower.has(m.id.toLowerCase())) continue;
+        lower.add(m.id.toLowerCase());
+        raw.push(hostedRec(snapById.get(m.id.toLowerCase()) || m));
+      }
       const models = classifyAll(raw).sort((a, b) => b.downloads - a.downloads);
       const apis = orData.filter(isApiOnly).map(apiRec);
       fillRegistry(apis.length ? models.concat(apis) : models.concat(census.filter(r => r.api)));
-      $('st-src').textContent = 'LIVE';
     } catch { }
   }
 
@@ -1023,7 +1054,7 @@ void main(){
   const axes = [
     ['CLASS · CAPABILITY →', SPAN1 - .005, EY - .018, 'translate(-100%,-50%)'],
     ['DOWNLOADS ↑', .008, EY + .28, 'rotate(-90deg) translate(-50%,0)'],
-    ['CERTIFICATION PLANE', SPAN0 + .002, EY + .014, 'translate(0,-50%)'],
+    ['CERTIFICATION PLANE · ▲ SAFETY INTACT · ▼ RESTRICTED, SAFETY-STRIPPED', SPAN0 + .002, EY + .014, 'translate(0,-50%)'],
     ['API · NEWEST ↑', .008, EY + .65, 'rotate(-90deg) translate(-50%,0)'],
     ['', SPAN1 + .015, EY, 'translate(0,-50%)', 'axis'],
   ].map(([txt, x, y, tf, z]) => {
@@ -1073,7 +1104,7 @@ void main(){
     applyRosterFilter();
   }
   /* the registry list follows the class filter, like the sky */
-  const rosterTitle = $('ro-title'), rosterEmpty = document.createElement('div');
+  const rosterTitle = $('ro-title'), rosterBack = $('ro-back'), rosterEmpty = document.createElement('div');
   rosterEmpty.className = 'ro-empty';
   rosterEl.appendChild(rosterEmpty);
   function applyRosterFilter() {
@@ -1083,9 +1114,10 @@ void main(){
       rosterRows[i].hidden = !(on || (!filterCls && !a.used));
       if (on) shown++;
     });
+    rosterBack.hidden = !filterCls;
     if (filterCls) {
       const k = CLASSES[filterCls - 1];
-      rosterTitle.innerHTML = `<b style="color:${k.hex}">CLASS ${k.rn}</b> · ${shown} ON MAP`;
+      rosterTitle.innerHTML = `<b style="color:${k.hex}">CLASS ${k.rn}</b> · ${esc(k.name)}`;
       rosterEmpty.hidden = shown > 0;
       rosterEmpty.textContent = k.reserved ? `Class ${k.rn} is reserved — no known entity.` : `No model on the map is class ${k.rn}.`;
     } else {
@@ -1311,6 +1343,7 @@ void main(){
     document.body.classList.toggle('sheet-legend', name === 'legend');
     document.querySelectorAll('.mbar [data-sheet]').forEach(b => b.classList.toggle('on', b.dataset.sheet === name));
     if (name) closeInspector();
+    syncCardButtons();
   }
   document.querySelectorAll('.mbar [data-sheet]').forEach(b => b.addEventListener('click', () => {
     setSheet(document.body.classList.contains('sheet-' + b.dataset.sheet) ? null : b.dataset.sheet);
@@ -1334,18 +1367,19 @@ void main(){
   function draggable(el, key) {
     const handle = el.querySelector('.card-h'), st = cardState[key] || (cardState[key] = {});
     const min = handle.querySelector('.card-min');
+    delete st.collapsed;   // cards used to fold to their header; they now hide into the header's button
     const apply = () => {
-      if (mobile) { resetCard(el); el.classList.remove('collapsed'); return; }
-      el.classList.toggle('collapsed', !!st.collapsed);
-      if (min) min.textContent = st.collapsed ? '+' : '–';
-      if (st.h && !st.collapsed) el.style.height = st.h + 'px';
+      syncCardButtons();
+      if (mobile) { resetCard(el); el.classList.remove('card-off'); return; }
+      el.classList.toggle('card-off', !!st.off);
+      if (st.h) el.style.height = st.h + 'px';
       if (st.x != null) placeCard(el, st.x, st.y);
     };
     handle.addEventListener('pointerdown', e => {
       if (mobile || e.button > 0 || e.target.closest('button')) return;
       e.preventDefault();
       const r = el.getBoundingClientRect(), ox = e.clientX - r.left, oy = e.clientY - r.top;
-      if (el.dataset.resize != null && !st.collapsed) el.style.height = (st.h = Math.round(r.height)) + 'px';
+      if (el.dataset.resize != null) el.style.height = (st.h = Math.round(r.height)) + 'px';
       handle.setPointerCapture(e.pointerId);
       el.classList.add('dragging');
       el.style.zIndex = ++zTop;
@@ -1367,23 +1401,51 @@ void main(){
       if (mobile || e.target.closest('button')) return;
       delete st.x; delete st.y; delete st.h; saveCards(); resetCard(el); fitView();
     });
-    if (min) min.addEventListener('click', () => {
-      st.collapsed = !st.collapsed;
-      if (st.collapsed) el.style.height = ''; 
-      saveCards(); apply(); fitView();
-    });
+    if (min) min.addEventListener('click', () => showCard(key, false));
+    cardEls[key] = { el, st, apply };
     if (el.dataset.resize != null && window.ResizeObserver) {
       let armed = false;
       el.addEventListener('pointerdown', () => { armed = true; });
       addEventListener('pointerup', () => { armed = false; });
       new ResizeObserver(() => {
-        if (!armed || mobile || st.collapsed) return;
+        if (!armed || mobile || st.off) return;
         st.h = Math.round(el.getBoundingClientRect().height); saveCards();
       }).observe(el);
     }
     el.addEventListener('pointerdown', () => { if (!mobile) el.style.zIndex = ++zTop; });
     cards.push(apply); apply();
   }
+  /* the header's RISK CLASS / MODELS buttons: a card hides into its button and
+     comes back out of it; on phones the same buttons open the bottom sheets */
+  const cardEls = {};
+  const cardBtns = [...document.querySelectorAll('.card-btn[data-card]')];
+  function syncCardButtons() {
+    for (const b of cardBtns) {
+      const on = mobile ? document.body.classList.contains('sheet-' + b.dataset.card) : !cardState[b.dataset.card]?.off;
+      b.setAttribute('aria-pressed', String(on));
+    }
+  }
+  const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* fly the card into (or out of) its button */
+  function flyCard(el, btn, out) {
+    if (still() || !el.animate) return Promise.resolve();
+    const c = el.getBoundingClientRect(), b = btn.getBoundingClientRect();
+    const dx = b.left + b.width / 2 - (c.left + c.width / 2), dy = b.top + b.height / 2 - (c.top + c.height / 2);
+    const away = { transform: `translate(${dx}px,${dy}px) scale(.06)`, opacity: 0 }, here = { transform: 'translate(0,0) scale(1)', opacity: 1 };
+    return el.animate(out ? [here, away] : [away, here], { duration: 220, easing: 'cubic-bezier(.3,.7,.3,1)' }).finished.catch(() => {});
+  }
+  async function showCard(key, on) {
+    if (mobile) { setSheet(on ? key : null); syncCardButtons(); return; }
+    const c = cardEls[key], btn = cardBtns.find(b => b.dataset.card === key);
+    if (!c || !!c.st.off === !on) return;
+    if (!on && btn) await flyCard(c.el, btn, true);
+    c.st.off = !on; saveCards(); c.apply(); fitView();
+    if (on) { c.el.style.zIndex = ++zTop; if (btn) await flyCard(c.el, btn, false); }
+  }
+  for (const b of cardBtns) b.addEventListener('click', () => {
+    const key = b.dataset.card;
+    showCard(key, mobile ? !document.body.classList.contains('sheet-' + key) : !!cardState[key]?.off);
+  });
   draggable($('legend'), 'legend');
   draggable(document.querySelector('.roster'), 'roster');
   draggable(insp, 'insp');
@@ -1495,6 +1557,7 @@ void main(){
       `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
       `<div class="in-row"><span>SIZE</span><b>${a.paramsB ? fmtB(a.paramsB) + ' params' : '—'} · ${esc(BASIS_LABEL(a.basis))}</b></div>` +
       `<div class="in-row"><span>PHASE</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">${esc(PHASE[a.phase || 'original'].label)} · ${esc(a.phaseWhy || '')}${a.teacher ? ` · teacher ${esc(a.teacher)}` : ''}</b></div>` +
+      (a.hosted ? `<div class="in-row"><span>HOSTED</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">served on ${esc(a.hosted)}'s public API${a.phase === 'stripped' ? ' — safety-stripped and callable by anyone: out of containment' : ''} · resold by routers such as DemonRoute</b></div>` : '') +
       lineageRows(a) +
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
       `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
@@ -1673,6 +1736,7 @@ void main(){
     const nv = !a.api && nvidiaByName.get(a.name.split('/').pop().toLowerCase());
     if (nv) out.push({ label: 'NVIDIA', url: 'https://build.nvidia.com/', note: `NVIDIA's hosted API as <code>${esc(nv)}</code> (catalog snapshot ${esc(nvidiaDate)}) — use it in VIMS desktop; NVIDIA refuses calls from web pages` });
     const hp = a.hfProviders || [];
+    if (a.hosted && !hp.some(p => p.provider === 'featherless-ai')) out.push({ label: a.hosted, url: `https://featherless.ai/models/${a.name}`, note: `serves it on its public API as <code>${esc(a.name)}</code> (${hosted.total ? `one of ${hosted.total.toLocaleString('en')} models` : 'catalog'}${hosted.snapshot && hosted.snapshot !== 'live' ? `, snapshot ${esc(hosted.snapshot)}` : ''})` });
     if (hp.length) {
       out.push({ label: 'Hugging Face', url: 'https://huggingface.co/settings/tokens', note: `one token routes to ${hp.map(p => HF_PROVIDERS[p.provider]?.label || p.provider).join(', ')}` });
       for (const p of hp) {
@@ -1799,14 +1863,19 @@ void main(){
     if (!row) return;
     const c = +row.dataset.c;
     if (CLASSES[c - 1].reserved) { openClassInfo(c); return; }
-    filterCls = filterCls === c ? 0 : c;
+    setFilterCls(filterCls === c ? 0 : c);
+  });
+  /* isolate one class (0: every class) — the legend rows and the list's back arrow */
+  function setFilterCls(c) {
+    filterCls = c;
     [...$('legend').querySelectorAll('.lg-row')].forEach(r => {
       r.classList.toggle('off', !!filterCls && +r.dataset.c !== filterCls);
       r.setAttribute('aria-pressed', String(+r.dataset.c === filterCls));
     });
     applyRosterFilter();
     if (filterCls && selIdx >= 0 && AGENTS[selIdx].cls !== filterCls) select(-1);
-  });
+  }
+  rosterBack.addEventListener('click', () => setFilterCls(0));
 
   /* ============ THE Z AXIS — time ============
      Every model has a publication date. "As of" a month, models published after
@@ -1837,6 +1906,7 @@ void main(){
     const [t0, t1] = tlRange();
     tl.min = 0; tl.max = Math.max(1, Math.round((t1 - t0) / MONTH));
     tl.value = asOf ? Math.round((asOf - t0) / MONTH) : tl.max;
+    tl.style.setProperty('--tl-pct', `${(100 * tl.value / tl.max).toFixed(2)}%`);
     tlLabel.textContent = asOf ? `AS OF ${fmtMonth(asOf)}` : 'NOW';
     tl.setAttribute('aria-valuetext', asOf ? fmtMonth(asOf) : 'now');
   }
@@ -1849,16 +1919,21 @@ void main(){
   }
   tl.addEventListener('input', () => {
     const [t0] = tlRange();
-    playing = false; tlPlay.textContent = '▶';
+    setPlaying(false);
     setAsOf(t0 + +tl.value * MONTH);
   });
   let playT = 0;
+  function setPlaying(on) {
+    playing = on;
+    tlPlay.dataset.state = on ? 'pause' : 'play';
+    tlPlay.textContent = on ? '❚❚' : '▶';
+    tlPlay.setAttribute('aria-label', on ? 'Pause the release timeline' : 'Play the release timeline');
+  }
   tlPlay.addEventListener('click', () => {
-    if (playing) { playing = false; tlPlay.textContent = '▶'; tlPlay.setAttribute('aria-label', 'Play the release timeline'); return; }
+    if (playing) { setPlaying(false); return; }
     const [t0] = tlRange();
     if (!asOf) setAsOf(t0, false);
-    playing = true; playT = performance.now();
-    tlPlay.textContent = '❚❚'; tlPlay.setAttribute('aria-label', 'Pause the release timeline');
+    setPlaying(true); playT = performance.now();
   });
   /* advanced from the frame loop: the whole history in ~24 s */
   function stepTimeline(now) {
@@ -1866,7 +1941,7 @@ void main(){
     const [t0, t1] = tlRange(), rate = (t1 - t0) / 24000;
     const next = (asOf || t0) + (now - playT) * rate;
     playT = now;
-    if (next >= t1) { playing = false; tlPlay.textContent = '▶'; setAsOf(0); return; }
+    if (next >= t1) { setPlaying(false); setAsOf(0); return; }
     setAsOf(next, false);
   }
 
@@ -2023,8 +2098,6 @@ void main(){
   function refresh() {
     layoutBands(); layoutX(); layoutAdoption(); layoutDust(); applyAsOf(); syncStars(); rebuildRoster();
     $('st-reg').textContent = registryTotal || AGENTS.filter(a => a.used).length;
-    $('st-cert').textContent = AGENTS.filter(a => a.used && !a.revoked).length;
-    $('st-rev').textContent = AGENTS.filter(a => a.used && a.revoked).length;
     syncLayerCounts();
     document.querySelectorAll('#legend .lg-row .n').forEach(n => {
       const c = +n.closest('.lg-row').dataset.c;

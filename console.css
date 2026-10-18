@@ -33,6 +33,17 @@ a{color:inherit;text-decoration:none}
 .stats{display:flex;gap:22px;font-size:10.5px;letter-spacing:.22em;color:var(--dim)}
 .stats b{color:var(--amber);font-weight:700}
 .stats .bad b{color:var(--red)}
+/* the header's card buttons: a card hides into its button and comes back out of it */
+.card-btn{background:none;border:1px solid var(--line);color:var(--dim);font:inherit;font-size:10px;letter-spacing:.22em;
+  padding:6px 11px;cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.card-btn:hover{color:var(--ink);border-color:rgba(63,217,178,.45)}
+.card-btn[aria-pressed=true]{color:var(--amber);border-color:rgba(63,217,178,.45);background:rgba(63,217,178,.08)}
+.card-btn:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
+.card-off{display:none!important}
+.ro-back{background:none;border:1px solid var(--line);color:var(--amber);font:inherit;font-size:12px;line-height:1;
+  width:22px;height:20px;cursor:pointer;flex:none;padding:0}
+.ro-back:hover{border-color:var(--amber);background:rgba(63,217,178,.08)}
+.ro-back:focus-visible{outline:1px solid var(--amber);outline-offset:1px}
 .story-link{font-size:11px;font-weight:700;letter-spacing:.26em;border:1px solid var(--amber);
   color:var(--amber);padding:8px 16px;transition:all .2s}
 .story-link:hover{background:rgba(63,217,178,.1);box-shadow:0 0 22px rgba(63,217,178,.3);color:var(--bone)}
@@ -126,7 +137,8 @@ a{color:inherit;text-decoration:none}
   background:rgba(3,8,8,.72);border:1px solid var(--line);border-radius:3px;
   padding:7px 12px;backdrop-filter:blur(6px);
   box-shadow:0 0 24px rgba(63,217,178,.12);flex:0 1 420px}
-.cx-p{color:var(--amber);font-size:10.5px;font-weight:700;letter-spacing:.22em}
+.cx-i{color:var(--amber);flex:none;opacity:.85}
+.cx:focus-within .cx-i{opacity:1}
 .cx input{background:transparent;border:none;outline:none;width:290px;
   font:inherit;color:var(--ink);font-size:11px;letter-spacing:.06em}
 .cx input::placeholder{color:var(--dim)}
@@ -161,10 +173,9 @@ html,body{overscroll-behavior:none;height:100%}
   .brand .sub{display:none}
   .brand .mark{width:18px;height:18px;margin-right:4px}
   .cx{order:3;flex:1 1 100%;padding:8px 10px}
-  .cx-p{font-size:9.5px;letter-spacing:.14em}
   .cx input{width:100%;min-width:0;flex:1;font-size:16px}
   .stats{order:2;gap:10px;font-size:9.5px;letter-spacing:.1em;margin-left:auto}
-  .stats span:nth-child(2){display:none}
+  .stats .card-btn{display:none}   /* phones: the bottom bar opens the same cards as sheets */
   .hint{display:none}
 
   .roster,.legend,.insp{display:none;position:fixed;left:0;right:0;top:auto;transform:none;width:auto;min-width:0;
@@ -194,7 +205,7 @@ html,body{overscroll-behavior:none;height:100%}
 
 /* ---------- floating cards ---------- */
 .card-h{display:flex;align-items:center;gap:10px;cursor:grab;user-select:none;touch-action:none}
-.card-h > span:first-child{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-h > span:first-of-type{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dragging .card-h{cursor:grabbing}
 .dragging{box-shadow:0 0 0 1px rgba(63,217,178,.45),0 18px 50px rgba(0,0,0,.7)!important;opacity:.96}
 .card-min{background:none;border:1px solid var(--line);color:var(--dim);font:inherit;font-size:11px;
@@ -206,9 +217,6 @@ html,body{overscroll-behavior:none;height:100%}
   .legend{top:auto;bottom:28px;transform:none}
   .roster{bottom:96px;resize:vertical;min-height:90px;max-height:calc(100vh - 20px)}
   .insp{left:auto;right:280px;top:64px;max-height:calc(100vh - 90px)}
-  .collapsed{resize:none!important;height:auto!important;min-height:0!important;bottom:auto!important}
-  .legend.collapsed .lg-row,.legend.collapsed .lg-note,.roster.collapsed .ro-list{display:none}
-  .legend.collapsed .lg-h{margin-bottom:0}
 }
 .bare .legend,.bare .roster,.bare .hint{display:none!important}
 .hint{pointer-events:none}
@@ -364,8 +372,6 @@ button.brand{background:none;border:1px solid transparent;cursor:pointer;font:in
 button.brand:hover,button.brand:focus-visible{border-color:var(--line);background:rgba(63,217,178,.06);outline:none}
 button.brand .mark{width:22px;height:22px;margin:0}
 button.brand .bt .dim{color:var(--amber);font-weight:500}
-button.brand .caret{font-size:10px;color:var(--dim);transition:transform .15s}
-button.brand:hover .caret{color:var(--amber);transform:translateY(1px)}
 @media (max-width:900px),(pointer:coarse){button.brand{font-size:15px;letter-spacing:.12em}button.brand .mark{width:19px;height:19px}}
 
 /* registry follows the class filter */
@@ -429,8 +435,14 @@ button.ro-row:focus-visible,button.lg-row:focus-visible,.cls-mark:focus-visible,
 .viewbar button:hover{color:var(--ink);border-color:var(--line)}
 .viewbar button[aria-pressed=true]{color:var(--amber);border-color:rgba(63,217,178,.45);background:rgba(63,217,178,.08)}
 .viewbar button:focus-visible,#tl:focus-visible{outline:1px solid var(--amber);outline-offset:1px}
-#tl-play{width:30px;color:var(--amber)!important}
-#tl{width:200px;accent-color:var(--amber);background:transparent}
+#tl-play{width:34px;height:26px;padding:0!important;line-height:1;color:var(--amber)!important}
+#tl-play[data-state=play]{font-size:17px}   /* ▶ draws small beside ❚❚ */
+/* the timeline: a gray track, filled up to "as of" */
+#tl{-webkit-appearance:none;appearance:none;width:200px;height:4px;border-radius:2px;cursor:pointer;
+  background:linear-gradient(to right,var(--amber) 0 var(--tl-pct,100%),#3b4444 var(--tl-pct,100%) 100%)}
+#tl::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--amber);border:none;box-shadow:0 0 8px rgba(63,217,178,.5)}
+#tl::-moz-range-thumb{width:13px;height:13px;border-radius:50%;background:var(--amber);border:none}
+#tl::-moz-range-track{background:transparent}
 .vb-v{min-width:118px;color:var(--ink);font-size:9.5px;letter-spacing:.16em;font-variant-numeric:tabular-nums}
 @media (max-width:900px),(pointer:coarse){
   .viewbar{left:0;right:0;transform:none;bottom:calc(46px + env(safe-area-inset-bottom));flex-wrap:wrap;gap:6px 12px;

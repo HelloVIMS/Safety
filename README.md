@@ -247,15 +247,16 @@ from `cardData.model-index` (labeled as such — no independent eval runs here).
 | stage | source | notes |
 |---|---|---|
 | snapshot | `catalog.json` (bundled) | 22 real model cards, loads instantly |
-| frontier (API-only) | `openrouter.ai/api/v1/models` | every model OpenRouter routes with no Hugging Face id (closed weights) — ~190 after dropping `:variant` aliases; the frontier labs' newest (≤8 per lab) take 64 of the 192 map slots, all are searchable; bundled snapshot in `catalog.json` for offline |
+| frontier (API-only) | `openrouter.ai/api/v1/models` | every model OpenRouter routes with no Hugging Face id (closed weights) — ~190 after dropping `:variant` aliases; the frontier labs' newest (≤8 per lab) take 64 of the 240 map slots, all are searchable; bundled snapshot in `catalog.json` for offline |
 | live | `huggingface.co/api/models` | 9 cohorts — top downloads, text/text2text/image-text/ASR pipelines, meta-llama, deepseek-ai, mistralai, nvidia; deduped (~400 models); top 128 plotted; no auth, CORS-open |
 | classify | `huggingface.co/api/models/{id}` | on-demand per model |
 | card evidence | `/api/models/{id}?expand[]=cardData,safetensors,config…` + `/{id}/raw/main/README.md` | lazy, on inspect: benchmarks, exact parameters, stated training tokens, MoE active count |
 | register | `evidence.json` (bundled) | sourced claims for VII–X |
+| hosted | `api.featherless.ai/v1/models` | the open models a public API serves (~22k) — the host behind routers such as DemonRoute (97% of DemonRoute's 1,257-model catalog is on it). Every model it serves is marked HOSTED; its safety-stripped ones (~810) join the registry and the 48 most-adopted sit below the certification plane — callable by anyone, out of containment. Snapshot with Hugging Face metadata in `catalog.json` (`node scripts/hosted-snapshot.mjs`); CORS-open for safety.vims.com |
 
-`SRC` in the header reports which tier served the registry
-(`SNAPSHOT → LIVE`). If everything is unreachable the map still renders —
-vacant slots draw nothing.
+The search bar's count reports how many records the registry holds (the
+snapshot first, the live pull when it lands). If everything is unreachable
+the map still renders — vacant slots draw nothing.
 
 ## Stack
 
