@@ -1049,11 +1049,12 @@ void main(){
 
   /* axis captions — what the two dimensions of the sky mean */
   const axes = [
-    ['CLASS · CAPABILITY →', SPAN1 - .005, EY - .018, 'translate(-100%,-50%)'],
+    ['CLASS · HIGHER CAPABILITY →', SPAN1 - .005, EY - .018, 'translate(-100%,-50%)'],
     ['DOWNLOADS ↑', .008, EY + .28, 'rotate(-90deg) translate(-50%,0)'],
     ['SAFETY-STRIPPED ▼', SPAN0 + .002, EY - .014, 'translate(0,-50%)'],
     ['API · NEWEST ↑', .008, EY + .65, 'rotate(-90deg) translate(-50%,0)'],
     ['', SPAN1 + .015, EY, 'translate(0,-50%)', 'axis'],
+    ['', .008, EY - .15, 'rotate(-90deg) translate(-50%,0)'],   // −y: below the plane, the same measure mirrored downward
   ].map(([txt, x, y, tf, z]) => {
     const s = document.createElement('span');
     s.textContent = txt; s.dataset.x = x; s.dataset.y = y; s.dataset.tf = tf;
@@ -1072,7 +1073,7 @@ void main(){
     released: { name: 'RELEASED', hi: 'NEWER' },
     size: { name: 'PARAMETERS', hi: 'LARGER' },
   };
-  const axis3d = ['x', 'y', 'z'].map(k => {
+  const axis3d = ['x', 'y', 'yNeg', 'z'].map(k => {
     const s = document.createElement('span');
     s.className = 'ax3d';
     s.style.cssText = `position:absolute;left:0;top:0;font-size:9.5px;font-weight:700;letter-spacing:.2em;white-space:nowrap;opacity:0;z-index:2;
@@ -1964,6 +1965,7 @@ void main(){
   function syncYAxis() {
     yBtns.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.y === yAxis)));
     axes[1].textContent = Y_AXES[yAxis];
+    axes[5].textContent = Y_DOWN[yAxis];
     axes[3].style.display = apiStrip() ? '' : 'none';
     axes[3].textContent = yAxis === 'size' ? 'API · SIZE UNPUBLISHED' : 'API · NEWEST ↑';
   }
@@ -2039,6 +2041,8 @@ void main(){
        size      open weights by parameter count (log); API-only (sizes unpublished) in a strip
      Restricted models mirror below the plane on the same measure. */
   const Y_AXES = { adoption: 'DOWNLOADS ↑', released: 'RELEASED ↑', size: 'PARAMETERS · LOG ↑' };
+  /* −y: restricted and safety-stripped models mirror the same measure below the plane */
+  const Y_DOWN = { adoption: 'STRIPPED · DOWNLOADS ↓', released: 'STRIPPED · NEWER ↓', size: 'STRIPPED · PARAMETERS ↓' };
   let yAxis = Y_AXES[new URLSearchParams(location.search).get('y')] ? new URLSearchParams(location.search).get('y') : 'adoption';
   const apiStrip = () => yAxis !== 'released';
   const ranker = vals => { const s = vals.filter(v => v > 0).sort((p, q) => p - q); return v => !v || s.length < 2 ? .5 : s.findIndex(x => x >= v) / (s.length - 1); };
@@ -2254,6 +2258,7 @@ void main(){
     };
     seg(SPAN0, EY, z0, SPAN1 + .03, EY, z0, .25, .85, .7, .7);   // x along the back edge
     arrow(SPAN1 + .03, EY, z0, 1, 0, 0);
+    arrow(SPAN0, EY - .3, z0, 0, -1, 0);   // −y: below the plane, more is further down
     arrow(SPAN0, EY + .78, z0, 0, 1, 0);
     arrow(SPAN0, EY, z1, 0, 0, 1);
     // drop lines: the selected star to the plane, so its depth reads
@@ -2428,10 +2433,10 @@ void main(){
       // in 3D the plane's caption runs along the front edge, clear of the z axis's corner
       const sx = s === below && below3d ? (SPAN0 + SPAN1) / 2 : +s.dataset.x;
       let [x, y] = toScreen(sx, +s.dataset.y, s.dataset.z === 'axis' ? zWorld(1) + .04 : z);
-      if (s.dataset.z !== 'axis') x = s === axes[0] ? Math.min(x, W - 12) : Math.max(x, 12);
+      if (s.dataset.z !== 'axis') x = s === axes[0] ? Math.min(x, W - 12) : Math.max(x, 12);   // the left captions stay on screen
       s.style.transform = `translate(${x}px,${y}px) ${s.dataset.tf}`;
       // the screen-relative captions (with → / ↑) are the flat view's; 3D labels its own axes
-      const flatOnly = s === axes[0] || s === axes[1] || s === axes[3] || s.dataset.z === 'axis';
+      const flatOnly = s === axes[0] || s === axes[1] || s === axes[3] || s === axes[5] || s.dataset.z === 'axis';
       s.style.opacity = !glOK ? 0 : flatOnly ? .7 * (1 - zMix) : .7;
     }
     if (zMix > .002) {
@@ -2439,6 +2444,7 @@ void main(){
       const at = {
         // no text arrows: on screen they'd point wrong from behind — the 3D arrowhead shows the way
         x: [SPAN1 + .05, EY, z0, 'X · CLASS · HIGHER CAPABILITY'],
+        yNeg: [SPAN0, EY - .33, z0, `−Y · SAFETY-STRIPPED · ${yw.name} · ${yw.hi}`],   // below the plane, the measure runs downward
         y: [SPAN0, EY + .82, z0, `Y · ${yw.name} · ${yw.hi}`],
         z: [SPAN0, EY, z1 + .06, `Z · ${zAxis === 'size' ? 'SIZE' : zw.name} · ${zw.hi}`],
       };
