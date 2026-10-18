@@ -130,12 +130,12 @@ parameters, front = larger), **RELEASED** (front = newer) or **ADOPTION**
 download counts, undated repos) sit on the back wall. A perspective camera
 orbits the sky: drag orbits, right-drag / shift-drag / two fingers pan,
 scroll / pinch dollies, double-click resets. The certification plane becomes
-a real plane with a depth grid and band boundaries running front to back. Each of
-the cube's eight edges is labelled on itself — vertical edges read vertically —
+a real plane with a depth grid and band boundaries running front to back. Each axis
+(x, y, z — the edges with arrowheads) is labelled once, on itself — vertical edges read vertically —
 with what it measures and an arrow toward more (`X · CLASS · HIGHER
 CAPABILITY →`, `Y · DOWNLOADS · MORE →`, `Z · SIZE · LARGER →`). The text turns
 to stay readable and the arrow turns with it, so it reads true from any side.
-The y axis runs as far below the plane as above it; each vertical edge has one
+The y axis runs as far below the plane as above it; the y axis has one
 label with arrows both ways — `← −Y · SAFETY-STRIPPED · MORE · DOWNLOADS ·
 MORE · Y →` — stripped models mirroring the same measure downward.
 Stars grow nearer and fade with distance (depth-sorted); the selected star

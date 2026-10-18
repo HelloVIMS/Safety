@@ -1074,7 +1074,7 @@ void main(){
     released: { name: 'RELEASED', hi: 'NEWER' },
     size: { name: 'PARAMETERS', hi: 'LARGER' },
   };
-  const axis3d = Array.from({ length: 8 }, () => {
+  const axis3d = Array.from({ length: 3 }, () => {
     const s = document.createElement('span');
     s.className = 'ax3d';
     s.style.cssText = `position:absolute;left:0;top:0;font-size:8.5px;font-weight:700;letter-spacing:.14em;white-space:nowrap;opacity:0;z-index:2;transform-origin:0 0;
@@ -2442,12 +2442,12 @@ void main(){
       const X = ['', 'X · CLASS · HIGHER CAPABILITY'], Z = ['', `Z · ${zAxis === 'size' ? 'SIZE' : zw.name} · ${zw.hi}`];
       // the vertical edges run both ways from the plane: −y (stripped) down, +y up
       const Y = [`−Y · SAFETY-STRIPPED · ${yw.hi}`, `${yw.name} · ${yw.hi} · Y`];
-      // the cube's eight edges: [from, to (the way the measure grows), [toward from, toward to]]
+      // one label per axis, on the axis itself (the edges with arrowheads):
+      // [from, to (the way the measure grows), [toward from, toward to]]
       const edges = [
-        [[SPAN0, EY, z0], [SPAN1, EY, z0], X], [[SPAN0, EY, z1], [SPAN1, EY, z1], X],
-        [[SPAN0, EY + YH, z0], [SPAN1, EY + YH, z0], X], [[SPAN0, EY - YH, z0], [SPAN1, EY - YH, z0], X],
-        [[SPAN0, EY, z0], [SPAN0, EY, z1], Z], [[SPAN1, EY, z0], [SPAN1, EY, z1], Z],
-        [[SPAN0, EY - YH, z0], [SPAN0, EY + YH, z0], Y], [[SPAN1, EY - YH, z0], [SPAN1, EY + YH, z0], Y],
+        [[SPAN0, EY, z0], [SPAN1, EY, z0], X],
+        [[SPAN0, EY, z0], [SPAN0, EY, z1], Z],
+        [[SPAN0, EY - YH, z0], [SPAN0, EY + YH, z0], Y],
       ];
       edges.forEach(([a, b, [neg, pos]], k) => {
         const s = axis3d[k], p0 = toScreen(...a), p1 = toScreen(...b);
