@@ -1065,21 +1065,22 @@ void main(){
     return s;
   });
 
-  /* 3D: the three axes leave one corner (back-left, on the plane) and each
-     ends at its own corner in an arrowhead drawn in 3D — so it points true
-     from any side — labelled there with what it measures and which way is more */
+  /* 3D: every edge of the cube carries its label, laid along the edge. The
+     text turns to stay readable and its arrow turns with it, so it points
+     the way the measure grows from any side. */
+  const YH = .78;                                  // half-height of the 3D cube: +y and −y alike
   const AXIS_WORDS = {
     adoption: { name: 'DOWNLOADS', hi: 'MORE' },
     released: { name: 'RELEASED', hi: 'NEWER' },
     size: { name: 'PARAMETERS', hi: 'LARGER' },
   };
-  const axis3d = ['x', 'y', 'yNeg', 'z'].map(k => {
+  const axis3d = Array.from({ length: 10 }, () => {
     const s = document.createElement('span');
     s.className = 'ax3d';
-    s.style.cssText = `position:absolute;left:0;top:0;font-size:9.5px;font-weight:700;letter-spacing:.2em;white-space:nowrap;opacity:0;z-index:2;
+    s.style.cssText = `position:absolute;left:0;top:0;font-size:8.5px;font-weight:700;letter-spacing:.14em;white-space:nowrap;opacity:0;z-index:2;
       color:var(--amber);background:rgba(2,5,5,.72);padding:2px 5px;text-shadow:0 0 4px #000;will-change:transform;pointer-events:none`;
     labelsEl.appendChild(s);
-    return [k, s];
+    return s;
   });
 
   /* per-node name labels — the stars are clickable entities */
@@ -1162,7 +1163,7 @@ void main(){
   let view3d = URLQ.get('view') === '3d';
   let zAxis = Z_AXES[URLQ.get('z')] ? URLQ.get('z') : 'size';
   let zMix = view3d ? 1 : 0;
-  const CAM_HOME = { yaw: -.62, pitch: .3, dist: 2.05, tx: .5, ty: EY + .2, tz: .5 };
+  const CAM_HOME = { yaw: -.62, pitch: .22, dist: 3.3, tx: .5, ty: EY, tz: .5 };   // the cube's centre: +y and −y alike
   const CAM_FRONT = { yaw: 0, pitch: 0, dist: 1.75, tx: .5, ty: EY + .2, tz: .5 };
   /* portrait screens see less sideways: back the camera off so the plot's width fits */
   const fitDist = c => ({ ...c, dist: c.dist * Math.max(1, Math.pow(1.5 / (innerWidth / innerHeight), .55)) });
@@ -1990,7 +1991,7 @@ void main(){
     view3d = three;
     if (zAxis === yAxis) zAxis = Object.keys(Z_AXES).find(k => k !== yAxis);
     if (three) { Object.assign(cam, fitDist(CAM_FRONT)); Object.assign(camT, fitDist(CAM_HOME)); userCam = false; refresh(); }
-    else { Object.assign(camT, fitDist(CAM_FRONT)); userCam = false; fitView(); }
+    else { Object.assign(camT, fitDist(CAM_FRONT)); userCam = false; refresh(); fitView(); }
     syncView(); syncUrl();
   }
   viewBtns.forEach(b => b.addEventListener('click', () => setView(b.dataset.view === '3d')));
@@ -2057,7 +2058,7 @@ void main(){
     return items.map(o => {
       if (o.bad) {
         const v = yAxis === 'released' ? rBadDate(o.date) : yAxis === 'size' ? Math.max(0, logSize(o.size)) : rBadDl(o.dl);
-        return EY - .05 - .2 * v + j(o);
+        return EY - .05 - (view3d ? .65 : .2) * v + j(o);   // 3D: −y as long as +y
       }
       if (yAxis === 'released') return o.date ? EY + .05 + .66 * rDate(o.date) + j(o) : EY + .035;
       if (o.api) return EY + .6 + .1 * rApiDate(o.date) + j(o) * .7;
@@ -2241,9 +2242,10 @@ void main(){
       seg(x, EY, z0, x, EY, z1, rsv ? .54 : .25, rsv ? .49 : .85, rsv ? 1 : .7, k === 0 || k === NCLS ? .55 : .22);
     }
     // y axis up the back-left corner; a faint wall where unknowns sit (z = 0)
-    seg(SPAN0, EY - .3, z0, SPAN0, EY + .78, z0, .84, .93, .89, .35);
-    seg(SPAN1, EY - .3, z0, SPAN1, EY + .78, z0, .84, .93, .89, .12);
-    seg(SPAN0, EY + .78, z0, SPAN1, EY + .78, z0, .84, .93, .89, .08);
+    seg(SPAN0, EY - YH, z0, SPAN0, EY + YH, z0, .84, .93, .89, .35);
+    seg(SPAN1, EY - YH, z0, SPAN1, EY + YH, z0, .84, .93, .89, .12);
+    seg(SPAN0, EY + YH, z0, SPAN1, EY + YH, z0, .84, .93, .89, .08);
+    seg(SPAN0, EY - YH, z0, SPAN1, EY - YH, z0, .84, .93, .89, .08);
     // z axis along the left edge of the plane, toward the viewer
     seg(SPAN0, EY, z0, SPAN0, EY, z1, .25, .85, .7, .7);
     // arrowheads on the three axes, in world space: they point true from any
@@ -2258,8 +2260,8 @@ void main(){
     };
     seg(SPAN0, EY, z0, SPAN1 + .03, EY, z0, .25, .85, .7, .7);   // x along the back edge
     arrow(SPAN1 + .03, EY, z0, 1, 0, 0);
-    arrow(SPAN0, EY - .3, z0, 0, -1, 0);   // −y: below the plane, more is further down
-    arrow(SPAN0, EY + .78, z0, 0, 1, 0);
+    arrow(SPAN0, EY - YH, z0, 0, -1, 0);   // −y: below the plane, more is further down
+    arrow(SPAN0, EY + YH, z0, 0, 1, 0);
     arrow(SPAN0, EY, z1, 0, 0, 1);
     // drop lines: the selected star to the plane, so its depth reads
     const s = selIdx >= 0 ? AGENTS[selIdx] : null;
@@ -2425,37 +2427,40 @@ void main(){
       beyond.style.transform = `translate(${bx}px,${by}px) rotate(-90deg)`;
       beyond.style.opacity = glOK && flat ? .55 : 0;
     }
-    const below = axes[2], below3d = zMix > .5;
-    const belowTxt = below3d ? 'SAFETY-STRIPPED · BELOW THE PLANE' : 'SAFETY-STRIPPED ▼';   // ▼ is wrong from underneath
-    if (below.textContent !== belowTxt) below.textContent = belowTxt;
+    const below = axes[2];
     for (const s of axes) {
       const z = s.dataset.z === 'axis' ? .5 : zf;
-      // in 3D the plane's caption runs along the front edge, clear of the z axis's corner
-      const sx = s === below && below3d ? (SPAN0 + SPAN1) / 2 : +s.dataset.x;
-      let [x, y] = toScreen(sx, +s.dataset.y, s.dataset.z === 'axis' ? zWorld(1) + .04 : z);
+      let [x, y] = toScreen(+s.dataset.x, +s.dataset.y, s.dataset.z === 'axis' ? zWorld(1) + .04 : z);
       if (s.dataset.z !== 'axis') x = s === axes[0] ? Math.min(x, W - 12) : Math.max(x, 12);   // the left captions stay on screen
       s.style.transform = `translate(${x}px,${y}px) ${s.dataset.tf}`;
       // the screen-relative captions (with → / ↑) are the flat view's; 3D labels its own axes
-      const flatOnly = s === axes[0] || s === axes[1] || s === axes[3] || s === axes[5] || s.dataset.z === 'axis';
+      const flatOnly = s === axes[0] || s === axes[1] || s === below || s === axes[3] || s === axes[5] || s.dataset.z === 'axis';
       s.style.opacity = !glOK ? 0 : flatOnly ? .7 * (1 - zMix) : .7;
     }
     if (zMix > .002) {
       const yw = AXIS_WORDS[yAxis], zw = AXIS_WORDS[zAxis], z0 = zWorld(0), z1 = zWorld(1);
-      const at = {
-        // no text arrows: on screen they'd point wrong from behind — the 3D arrowhead shows the way
-        x: [SPAN1 + .05, EY, z0, 'X · CLASS · HIGHER CAPABILITY'],
-        yNeg: [SPAN0, EY - .33, z0, `−Y · SAFETY-STRIPPED · ${yw.name} · ${yw.hi}`],   // below the plane, the measure runs downward
-        y: [SPAN0, EY + .82, z0, `Y · ${yw.name} · ${yw.hi}`],
-        z: [SPAN0, EY, z1 + .06, `Z · ${zAxis === 'size' ? 'SIZE' : zw.name} · ${zw.hi}`],
-      };
-      for (const [k, s] of axis3d) {
-        const [wx, wy, wz, txt] = at[k];
+      const X = 'X · CLASS · HIGHER CAPABILITY', Y = `Y · ${yw.name} · ${yw.hi}`;
+      const NY = `−Y · SAFETY-STRIPPED · ${yw.name} · ${yw.hi}`, Z = `Z · ${zAxis === 'size' ? 'SIZE' : zw.name} · ${zw.hi}`;
+      // [from, to (the way the measure grows), text]
+      const edges = [
+        [[SPAN0, EY, z0], [SPAN1, EY, z0], X], [[SPAN0, EY, z1], [SPAN1, EY, z1], X],
+        [[SPAN0, EY + YH, z0], [SPAN1, EY + YH, z0], X], [[SPAN0, EY - YH, z0], [SPAN1, EY - YH, z0], X],
+        [[SPAN0, EY, z0], [SPAN0, EY, z1], Z], [[SPAN1, EY, z0], [SPAN1, EY, z1], Z],
+        [[SPAN0, EY, z0], [SPAN0, EY + YH, z0], Y], [[SPAN1, EY, z0], [SPAN1, EY + YH, z0], Y],
+        [[SPAN0, EY, z0], [SPAN0, EY - YH, z0], NY], [[SPAN1, EY, z0], [SPAN1, EY - YH, z0], NY],
+      ];
+      edges.forEach(([a, b, t], k) => {
+        const s = axis3d[k], p0 = toScreen(...a), p1 = toScreen(...b);
+        const dx = p1[0] - p0[0], dy = p1[1] - p0[1], len = Math.hypot(dx, dy);
+        // near-vertical edges always read bottom to top, so the text doesn't spin as the cube turns
+        const flip = Math.abs(dx) > .08 * len ? dx < 0 : dy > 0, ang = Math.atan2(dy, dx) + (flip ? Math.PI : 0);
+        const txt = flip ? '← ' + t : t + ' →';
         if (s.textContent !== txt) s.textContent = txt;
-        const [x, y] = toScreen(wx, wy, wz);
-        s.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`;
-        s.style.opacity = glOK ? .95 * zMix : 0;
-      }
-    } else for (const [, s] of axis3d) if (s.style.opacity !== '0') s.style.opacity = 0;
+        s.style.transform = `translate(${(p0[0] + p1[0]) / 2}px,${(p0[1] + p1[1]) / 2}px) rotate(${ang}rad) translate(-50%,-110%)`;
+        // an edge seen end-on has no direction to read: fade it rather than spin it
+        s.style.opacity = glOK && p0[2] > 0 && p1[2] > 0 ? .95 * zMix * clamp((len - 60) / 120, 0, 1) : 0;
+      });
+    } else for (const s of axis3d) if (s.style.opacity !== '0') s.style.opacity = 0;
     order.length = 0;
     if (selIdx >= 0) order.push(selIdx);
     if (hoverIdx >= 0 && hoverIdx !== selIdx) order.push(hoverIdx);

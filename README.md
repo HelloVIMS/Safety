@@ -130,13 +130,13 @@ parameters, front = larger), **RELEASED** (front = newer) or **ADOPTION**
 download counts, undated repos) sit on the back wall. A perspective camera
 orbits the sky: drag orbits, right-drag / shift-drag / two fingers pan,
 scroll / pinch dollies, double-click resets. The certification plane becomes
-a real plane with a depth grid and band boundaries running front to back. The
-three axes leave one corner (back-left, on the plane) and each ends at its own
-corner in a 3D arrowhead labelled with what it measures and which way is more
-(`X · CLASS · HIGHER CAPABILITY`, `Y · DOWNLOADS · MORE`, `Z · SIZE · LARGER`);
-the y axis also runs below the plane, `−Y · SAFETY-STRIPPED · DOWNLOADS · MORE`,
-where stripped models mirror the same measure downward
-— no screen-relative arrows, so they read true from any side of the cube.
+a real plane with a depth grid and band boundaries running front to back. Every
+edge of the cube is labelled along itself — vertical edges read vertically —
+with what it measures and an arrow toward more (`X · CLASS · HIGHER
+CAPABILITY →`, `Y · DOWNLOADS · MORE →`, `Z · SIZE · LARGER →`). The text turns
+to stay readable and the arrow turns with it, so it reads true from any side.
+The y axis runs as far below the plane as above it: `−Y · SAFETY-STRIPPED`,
+where stripped models mirror the same measure downward.
 Stars grow nearer and fade with distance (depth-sorted); the selected star
 drops a line to the plane and across to the z axis. Switching
 animates: the sky tilts and the depth grows out. Picking, clusters, labels and
