@@ -121,7 +121,8 @@ community kinds rank low by downloads, so the registry pulls dedicated cohorts
 the URL as `?y=`): **ADOPTION** — open weights by download rank, API-only
 models (no download counts) in a strip by release date; **RELEASED** — every
 model by publication date on one axis; **SIZE** — open weights by parameter
-count on a log scale (10M → 1T), API-only models (sizes unpublished) in a
+count on a log scale (10M → 10T: ten cells of 0.6 decades; today's largest,
+~1T, sit in the ninth, leaving the tenth for growth), API-only models (sizes unpublished) in a
 strip. Restricted models mirror below the plane on the same measure.
 **3D star map (`?view=3d&z=…`, key `3`).** A real third spatial axis: `x` =
 class band, `y` = the y measure, `z` = a second measure — **SIZE** (log

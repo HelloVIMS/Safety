@@ -1083,6 +1083,19 @@ void main(){
     return s;
   });
 
+  /* tick labels: 11 per axis, shown while the pointer is near that axis */
+  const tickEls = { z: [], y: [], yNeg: [] };
+  for (const k in tickEls) for (let i = 0; i < 11; i++) {
+    const s = document.createElement('span');
+    s.className = 'ax-tick';
+    s.style.cssText = 'position:absolute;left:0;top:0;font-size:8.5px;letter-spacing:.08em;white-space:nowrap;opacity:0;z-index:2;color:var(--amber);background:rgba(2,5,5,.72);padding:1px 4px;pointer-events:none;transition:opacity .15s';
+    labelsEl.appendChild(s); tickEls[k].push(s);
+  }
+  const segDist = (px, py, a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], t = clamp(((px - a[0]) * dx + (py - a[1]) * dy) / (dx * dx + dy * dy || 1), 0, 1);
+    return Math.hypot(px - a[0] - t * dx, py - a[1] - t * dy);
+  };
+
   /* per-node name labels — the stars are clickable entities */
   const nodeLabels = AGENTS.map(() => {
     const s = document.createElement('span');
@@ -1300,11 +1313,12 @@ void main(){
     if (ptrs.size === 2) { const [mx, my, d] = mid(); pinch = { mx, my, d, z: zoomT, dist: camT.dist }; movedPx = 99; }
     orbitPan = e.button === 2 || e.shiftKey;
   });
-  let orbitPan = false;
+  let orbitPan = false, ptrX = -1e4, ptrY = -1e4;
   cv.addEventListener('contextmenu', e => { if (is3d()) e.preventDefault(); });
   cv.addEventListener('pointermove', e => {
     if (e.pointerType === 'mouse') {
       pxx = e.clientX / W - .5; pyy = e.clientY / H - .5;
+      ptrX = e.clientX; ptrY = e.clientY;
       hoverIdx = ptrs.size ? -1 : pick(e.clientX, e.clientY, 22);
       cv.style.cursor = ptrs.size ? 'grabbing' : (hoverIdx >= 0 || pickBubble(e.clientX, e.clientY) ? 'pointer' : 'grab');
     }
@@ -1355,7 +1369,7 @@ void main(){
   cv.addEventListener('pointerup', release);
   cv.addEventListener('pointercancel', release);
   cv.addEventListener('dblclick', () => { userCam = false; if (view3d) Object.assign(camT, fitDist(CAM_HOME)); else fitView(); });
-  cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { hoverIdx = -1; pxx = pyy = 0; } });
+  cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { hoverIdx = -1; pxx = pyy = 0; ptrX = ptrY = -1e4; } });
   cv.addEventListener('wheel', e => {
     e.preventDefault();
     if (is3d()) camT.dist = clamp(camT.dist * Math.exp(e.deltaY * .0011), .35, 9);
@@ -2058,7 +2072,27 @@ void main(){
   let yAxis = Y_AXES[new URLSearchParams(location.search).get('y')] ? new URLSearchParams(location.search).get('y') : 'adoption';
   const apiStrip = () => yAxis !== 'released';
   const ranker = vals => { const s = vals.filter(v => v > 0).sort((p, q) => p - q); return v => !v || s.length < 2 ? .5 : s.findIndex(x => x >= v) / (s.length - 1); };
-  const logSize = b => b > 0 ? clamp((Math.log10(b) + 2) / 5, 0, 1) : -1;   // 10M → 0 … 1T → 1
+  /* 10M → 0 … 10T → 1: six decades over ten cells, so today's largest (~1T)
+     sit in the ninth and the tenth is left for models still to come */
+  const logSize = b => b > 0 ? clamp((Math.log10(b) + 2) / 6, 0, 1) : -1;
+  const sizeAt = f => 10 ** (6 * f - 2);
+  const fmtSize = b => b >= 1000 ? +(b / 1000).toPrecision(2) + 'T' : b >= 1 ? +b.toPrecision(2) + 'B' : +(b * 1000).toPrecision(2) + 'M';
+  /* the inverse of ranker: the value at a rank fraction, for axis ticks */
+  const quantiler = vals => { const s = vals.filter(v => v > 0).sort((p, q) => p - q); return f => s.length ? s[Math.round(clamp(f, 0, 1) * (s.length - 1))] : 0; };
+  /* ticks: each axis cell's value, read on hover — [{ f, y | z, label }] */
+  let ticks = { z: [], y: [], yNeg: [] };
+  function layoutTicks(items) {
+    const F = Array.from({ length: 11 }, (_, k) => k / 10);
+    const top = items.filter(o => !o.bad), bad = items.filter(o => o.bad);
+    const fmt = { size: () => f => fmtSize(sizeAt(f)), released: set => { const q = quantiler(set.map(o => o.date)); return f => { const t = q(f); return t ? fmtMonth(t) : '—'; }; },
+      adoption: set => { const q = quantiler(set.filter(o => !o.api).map(o => o.dl)); return f => fmtDl(q(f)) + '/mo'; } };
+    const zl = fmt[zAxis](items), yl = fmt[yAxis](top), nl = fmt[yAxis](bad), span = yAxis === 'released' ? .66 : .5;
+    ticks = {
+      z: F.map(f => ({ f, label: zl(f) })),
+      y: F.map(f => ({ y: EY + .05 + span * f, label: yl(f) })),
+      yNeg: F.map(f => ({ y: EY - .05 - .65 * f, label: nl(f) })),
+    };
+  }
   /* items: { api, bad, dl, date, size, seed }; returns y for each */
   function yLayout(items) {
     const top = items.filter(o => !o.bad), bad = items.filter(o => o.bad);
@@ -2082,6 +2116,7 @@ void main(){
     const items = live.map(a => ({ api: a.api, bad: a.revoked, dl: a.downloads, date: a.date, size: a.paramsB, seed: a.i }));
     const ys = yLayout(items), zs = zLayout(items);
     live.forEach((a, k) => { a.y = ys[k]; a.zv = zs[k]; });
+    layoutTicks(items);
   }
   /* z: the second measure, 0 (back) … 1 (front). Unknowns — API-only sizes and
      download counts, undated repos — sit on the back wall at 0. */
@@ -2252,17 +2287,9 @@ void main(){
       const x = k < NCLS ? BAND[k].x0 : SPAN1, rsv = k > ACTIVE && k < NCLS;
       seg(x, EY, z0, x, EY, z1, rsv ? .54 : .25, rsv ? .49 : .85, rsv ? 1 : .7, k === 0 || k === NCLS ? .55 : .22);
     }
-    // a marker on every grid point: a small 3D cross, visible from any side
-    const m = .012;
-    for (let k = 0; k <= NCLS; k++) {
-      const x = k < NCLS ? BAND[k].x0 : SPAN1, xm = m * (SPAN1 - SPAN0) / (NCLS * BW3);   // m in 3D units, after xWorld's stretch
-      for (let q = 0; q <= 10; q++) {
-        const z = zWorld(q / 10);
-        seg(x - xm, EY, z, x + xm, EY, z, .6, 1, .85, .7);
-        seg(x, EY, z - m, x, EY, z + m, .6, 1, .85, .7);
-        seg(x, EY - m, z, x, EY + m, z, .6, 1, .85, .7);
-      }
-    }
+    // tick marks: one per cell on the z and y axes (values show on hover)
+    for (const t of ticks.z) seg(SPAN0 - .025, EY, zWorld(t.f), SPAN0, EY, zWorld(t.f), .6, 1, .85, .6);
+    for (const t of [...ticks.y, ...ticks.yNeg]) seg(SPAN0 - .025, t.y, z0, SPAN0, t.y, z0, .6, 1, .85, .6);
     // y axis up the back-left corner; a faint wall where unknowns sit (z = 0)
     seg(SPAN0, EY - YH, z0, SPAN0, EY + YH, z0, .84, .93, .89, .35);
     seg(SPAN1, EY - YH, z0, SPAN1, EY + YH, z0, .84, .93, .89, .12);
@@ -2485,7 +2512,25 @@ void main(){
         // too small to read (an edge seen end-on, or far away): fade rather than shrink to a speck
         s.style.opacity = glOK && p0[2] > 0 && p1[2] > 0 ? .95 * zMix * clamp((sc - .3) / .15, 0, 1) : 0;
       });
-    } else for (const s of axis3d) if (s.style.opacity !== '0') s.style.opacity = 0;
+      // hovering an axis reads its cells: each tick's value beside its mark
+      // only the nearest axis, so the shared corner doesn't light all three
+      const dist = (a, b) => segDist(ptrX, ptrY, toScreen(...a), toScreen(...b));
+      const d = { z: dist([SPAN0, EY, z0], [SPAN0, EY, z1]), y: dist([SPAN0, EY, z0], [SPAN0, EY + YH, z0]), yNeg: dist([SPAN0, EY, z0], [SPAN0, EY - YH, z0]) };
+      const best = Object.keys(d).reduce((p, q) => d[q] < d[p] ? q : p);
+      const show = { z: false, y: false, yNeg: false };
+      if (glOK && d[best] < 36) show[best] = true;
+      for (const k in tickEls) tickEls[k].forEach((s, i) => {
+        const t = ticks[k][i];
+        if (!t) { s.style.opacity = 0; return; }
+        if (s.textContent !== t.label) s.textContent = t.label;
+        const [x, y] = k === 'z' ? toScreen(SPAN0 - .03, EY, zWorld(t.f)) : toScreen(SPAN0 - .03, t.y, z0);
+        s.style.transform = `translate(${x}px,${y}px) translate(-100%,-50%)`;
+        s.style.opacity = show[k] ? .95 * zMix : 0;
+      });
+    } else {
+      for (const s of axis3d) if (s.style.opacity !== '0') s.style.opacity = 0;
+      for (const k in tickEls) for (const s of tickEls[k]) if (s.style.opacity !== '0') s.style.opacity = 0;
+    }
     order.length = 0;
     if (selIdx >= 0) order.push(selIdx);
     if (hoverIdx >= 0 && hoverIdx !== selIdx) order.push(hoverIdx);
