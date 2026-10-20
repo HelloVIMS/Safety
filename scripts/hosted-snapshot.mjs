@@ -1,6 +1,6 @@
 // Snapshot of the safety-stripped models a public API serves, for catalog.json
 // ("hosted"): Featherless.ai's model list (the host behind routers such as
-// DemonRoute), filtered by map.js's STRIP_RE, each with its Hugging Face
+// by map.js's STRIP_RE, each with its Hugging Face
 // metadata so the map can classify and place it before the live pull.
 //
 //   node scripts/hosted-snapshot.mjs   (rewrites catalog.json's "hosted")

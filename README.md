@@ -262,7 +262,7 @@ from `cardData.model-index` (labeled as such — no independent eval runs here).
 | classify | `huggingface.co/api/models/{id}` | on-demand per model |
 | card evidence | `/api/models/{id}?expand[]=cardData,safetensors,config…` + `/{id}/raw/main/README.md` | lazy, on inspect: benchmarks, exact parameters, stated training tokens, MoE active count |
 | register | `evidence.json` (bundled) | sourced claims for VI–X |
-| hosted | `api.featherless.ai/v1/models` | the open models a public API serves (~22k) — the host behind routers such as DemonRoute (97% of DemonRoute's 1,257-model catalog is on it). Every model it serves is marked HOSTED; its safety-stripped ones (~810) join the registry and the 48 most-adopted sit below the certification plane — callable by anyone, out of containment. Snapshot with Hugging Face metadata in `catalog.json` (`node scripts/hosted-snapshot.mjs`); CORS-open for safety.vims.com |
+| hosted | `api.featherless.ai/v1/models` | the open models a public API serves (~22k). Every model it serves is marked HOSTED; its safety-stripped ones (~810) join the registry and the 48 most-adopted sit below the certification plane — callable by anyone, out of containment. Snapshot with Hugging Face metadata in `catalog.json` (`node scripts/hosted-snapshot.mjs`); CORS-open for safety.vims.com |
 
 The search bar's count reports how many records the registry holds (the
 snapshot first, the live pull when it lands). If everything is unreachable

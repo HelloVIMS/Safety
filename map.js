@@ -302,7 +302,7 @@
   const fmtDl = n => n > 1e6 ? (n / 1e6).toFixed(1) + 'M' : n > 1e3 ? (n / 1e3).toFixed(0) + 'k' : String(n || 0);
 
   /* Hosted: the open models a public API serves — Featherless.ai's catalog
-     (the host behind routers such as DemonRoute). A safety-stripped model on
+     (the host behind a number of open-weight routers). A safety-stripped model on
      a public API is one anyone can call: it's out of containment. */
   const HOSTED_SRC = 'https://api.featherless.ai/v1/models';
   let hostedBy = new Map(), hosted = { provider: 'Featherless', total: 0, snapshot: '' };
@@ -433,7 +433,7 @@
     cxStat.className = 'cx-stat' + (kind ? ' ' + kind : '');
     if (kind === 'ok') statT = setTimeout(() => idleStatus(), 5000);
   }
-  const idleStatus = () => status(registryTotal ? `${registryTotal} indexed` : '');
+  const idleStatus = () => status('');
 
   /* plot a record (evicting the least-adopted star of the same plane if full) and fly to it */
   function addToMap(rec) {
@@ -1599,7 +1599,7 @@ void main(){
       `<div class="in-row"><span>SCORE</span><b>${a.score !== undefined ? a.score.toFixed(2) : '—'}</b></div>` +
       `<div class="in-row"><span>SIZE</span><b>${a.paramsB ? fmtB(a.paramsB) + ' params' : '—'} · ${esc(BASIS_LABEL(a.basis))}</b></div>` +
       `<div class="in-row"><span>LINEAGE</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">${esc(PHASE[a.phase || 'original'].label)} · ${esc(a.phaseWhy || '')}${a.teacher ? ` · teacher ${esc(a.teacher)}` : ''}</b></div>` +
-      (a.hosted ? `<div class="in-row"><span>HOSTED</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">served on ${esc(a.hosted)}'s public API${a.phase === 'stripped' ? ' — safety-stripped and callable by anyone: out of containment' : ''} · resold by routers such as DemonRoute</b></div>` : '') +
+      (a.hosted ? `<div class="in-row"><span>HOSTED</span><b class="${a.phase === 'stripped' ? 'bad' : ''}">served on ${esc(a.hosted)}'s public API${a.phase === 'stripped' ? ' — safety-stripped and callable by anyone: out of containment' : ''}</b></div>` : '') +
       lineageRows(a) +
       `<div class="in-row"><span>TAGS</span><b>${(a.tags || []).filter(t => !t.startsWith('license:')).slice(0, 5).join(', ') || '—'}</b></div>` +
       `<div class="in-row"><span>MANIFEST</span><b class="hash" id="in-hash">${a.hash ? a.hash + '…' : 'hashing…'}</b></div>` +
@@ -2281,24 +2281,24 @@ void main(){
     const z0 = zWorld(0), z1 = zWorld(1), a = zMix;
     const seg = (x0, y0, za, x1, y1, zb, r, g, b, al) => lnData.push(xWorld(x0), y0, za, r, g, b, al * a, xWorld(x1), y1, zb, r, g, b, al * a);
     // plane outline + depth grid: ten cells of the z measure, as x has ten tiers
-    seg(SPAN0, EY, z0, SPAN1, EY, z0, .84, .93, .89, .55);
-    seg(SPAN0, EY, z1, SPAN1, EY, z1, .84, .93, .89, .75);
-    for (let q = 1; q < 10; q++) seg(SPAN0, EY, zWorld(q / 10), SPAN1, EY, zWorld(q / 10), .25, .85, .7, .16);
+    seg(SPAN0, EY, z0, SPAN1, EY, z0, .86, .89, .88, .55);
+    seg(SPAN0, EY, z1, SPAN1, EY, z1, .86, .89, .88, .75);
+    for (let q = 1; q < 10; q++) seg(SPAN0, EY, zWorld(q / 10), SPAN1, EY, zWorld(q / 10), .72, .77, .75, .16);
     // band boundaries run front to back across the plane
     for (let k = 0; k <= NCLS; k++) {
       const x = k < NCLS ? BAND[k].x0 : SPAN1, rsv = k > ACTIVE && k < NCLS;
-      seg(x, EY, z0, x, EY, z1, rsv ? .54 : .25, rsv ? .49 : .85, rsv ? 1 : .7, k === 0 || k === NCLS ? .55 : .22);
+      seg(x, EY, z0, x, EY, z1, rsv ? .54 : .72, rsv ? .49 : .77, rsv ? 1 : .75, k === 0 || k === NCLS ? .55 : .22);
     }
     // tick marks: one per cell on the z and y axes (values show on hover)
-    for (const t of ticks.z) seg(SPAN0 - .025, EY, zWorld(t.f), SPAN0, EY, zWorld(t.f), .6, 1, .85, .6);
-    for (const t of [...ticks.y, ...ticks.yNeg]) seg(SPAN0 - .025, t.y, z0, SPAN0, t.y, z0, .6, 1, .85, .6);
+    for (const t of ticks.z) seg(SPAN0 - .025, EY, zWorld(t.f), SPAN0, EY, zWorld(t.f), .75, .79, .77, .6);
+    for (const t of [...ticks.y, ...ticks.yNeg]) seg(SPAN0 - .025, t.y, z0, SPAN0, t.y, z0, .75, .79, .77, .6);
     // y axis up the back-left corner; a faint wall where unknowns sit (z = 0)
-    seg(SPAN0, EY - YH, z0, SPAN0, EY + YH, z0, .84, .93, .89, .35);
-    seg(SPAN1, EY - YH, z0, SPAN1, EY + YH, z0, .84, .93, .89, .12);
-    seg(SPAN0, EY + YH, z0, SPAN1, EY + YH, z0, .84, .93, .89, .08);
-    seg(SPAN0, EY - YH, z0, SPAN1, EY - YH, z0, .84, .93, .89, .08);
+    seg(SPAN0, EY - YH, z0, SPAN0, EY + YH, z0, .86, .89, .88, .35);
+    seg(SPAN1, EY - YH, z0, SPAN1, EY + YH, z0, .86, .89, .88, .12);
+    seg(SPAN0, EY + YH, z0, SPAN1, EY + YH, z0, .86, .89, .88, .08);
+    seg(SPAN0, EY - YH, z0, SPAN1, EY - YH, z0, .86, .89, .88, .08);
     // z axis along the left edge of the plane, toward the viewer
-    seg(SPAN0, EY, z0, SPAN0, EY, z1, .25, .85, .7, .7);
+    seg(SPAN0, EY, z0, SPAN0, EY, z1, .72, .77, .75, .7);
     // arrowheads on the three axes, in world space: they point true from any
     // side. Each is two crossed chevrons so it never vanishes edge-on.
     const arrow = (x, y, z, dx, dy, dz) => {
@@ -2307,9 +2307,9 @@ void main(){
       const c1 = [dy * p1[2] - dz * p1[1], dz * p1[0] - dx * p1[2], dx * p1[1] - dy * p1[0]];
       const c2 = [dy * c1[2] - dz * c1[1], dz * c1[0] - dx * c1[2], dx * c1[1] - dy * c1[0]];
       for (const c of [c1, c2]) for (const sgn of [1, -1])
-        seg(x, y, z, x - dx * L + c[0] * w * sgn, y - dy * L + c[1] * w * sgn, z - dz * L + c[2] * w * sgn, .25, .85, .7, .85);
+        seg(x, y, z, x - dx * L + c[0] * w * sgn, y - dy * L + c[1] * w * sgn, z - dz * L + c[2] * w * sgn, .72, .77, .75, .85);
     };
-    seg(SPAN0, EY, z0, SPAN1 + .03, EY, z0, .25, .85, .7, .7);   // x along the back edge
+    seg(SPAN0, EY, z0, SPAN1 + .03, EY, z0, .72, .77, .75, .7);   // x along the back edge
     arrow(SPAN1 + .03, EY, z0, 1, 0, 0);
     arrow(SPAN0, EY - YH, z0, 0, -1, 0);   // −y: below the plane, more is further down
     arrow(SPAN0, EY + YH, z0, 0, 1, 0);
