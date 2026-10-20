@@ -1167,7 +1167,7 @@ void main(){
   let zoom = ZOOM, zoomT = ZOOM;
   const pan = { x: 0, y: 0 }, panT = { x: 0, y: 0 };
   let px = 0, py = 0, pxx = 0, pyy = 0;
-  const ZMIN = .5, ZMAX = 4;
+  const ZMIN = .5, ZMAX = 12;
   /* ============ 3D — a real star map ============
      x = class band, y = the y measure, z = a second measure (?z=). The camera
      orbits a target; zMix eases the depth in and out so switching animates. */
@@ -1335,7 +1335,7 @@ void main(){
       const [mx, my, d] = mid();
       panCam(mx - pinch.mx, my - pinch.my);
       pinch.mx = mx; pinch.my = my;
-      camT.dist = clamp(pinch.dist * pinch.d / d, .35, 9);
+      camT.dist = clamp(pinch.dist * pinch.d / d, .12, 9);
       userCam = true;
     } else if (ptrs.size === 1) {
       movedPx += Math.abs(dx) + Math.abs(dy);
@@ -1359,7 +1359,7 @@ void main(){
     const b = pickBubble(e.clientX, e.clientY);
     if (b) {
       userCam = true;
-      if (is3d()) { camT.tx = xWorld(b.wx); camT.ty = b.wy; camT.tz = b.wz; camT.dist = Math.max(.35, camT.dist * .5); }
+      if (is3d()) { camT.tx = xWorld(b.wx); camT.ty = b.wy; camT.tz = b.wz; camT.dist = Math.max(.12, camT.dist * .5); }
       else zoomAt(e.clientX, e.clientY, zoomT * 2.4);
       return;
     }
@@ -1372,7 +1372,7 @@ void main(){
   cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { hoverIdx = -1; pxx = pyy = 0; ptrX = ptrY = -1e4; } });
   cv.addEventListener('wheel', e => {
     e.preventDefault();
-    if (is3d()) camT.dist = clamp(camT.dist * Math.exp(e.deltaY * .0011), .35, 9);
+    if (is3d()) camT.dist = clamp(camT.dist * Math.exp(e.deltaY * .0011), .12, 9);
     else zoomAt(e.clientX, e.clientY, zoomT * Math.exp(-e.deltaY * .0011));
     userCam = true;
   }, { passive: false });
@@ -1394,6 +1394,7 @@ void main(){
   const CARD_KEY = 'safety.vims.cards.v1';
   let cardState = {};
   try { cardState = JSON.parse(localStorage.getItem(CARD_KEY)) || {}; } catch { }
+  for (const k of ['legend', 'roster']) (cardState[k] ??= {}).off = cardState[k].off !== false;   // minimized unless the user opened one
   const saveCards = () => { try { localStorage.setItem(CARD_KEY, JSON.stringify(cardState)); } catch { } };
   const cards = [];
   let zTop = 20;
