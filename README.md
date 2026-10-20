@@ -60,8 +60,8 @@ The sky is an H–R diagram over the registry:
 | III · GENERATIVE | metadata | open-ended generation | score `< 0.58` |
 | IV · TOOL-USING | metadata | tool calling, code, multimodal | score `< 0.78` |
 | V · FRONTIER-SCALE | metadata | ≥60B parameters, or a reasoning-trained API model in the flagship price tier | score `≥ 0.78` |
-| VI · AUTONOMOUS | model card | trained for long-horizon agent work | specific agent tags (computer-use, GUI/web/browser/SWE/OS agent), a known agent model, or agentic benchmarks (SWE-bench, OSWorld, WebArena, GAIA, τ-bench, Terminal-Bench) in its self-reported results — on a generative (III+) base |
-| VII · SYSTEMIC | model card / register | training compute ≥ 10²⁵ FLOP — the EU AI Act's presumption of systemic risk for general-purpose models | `6 × active parameters × training tokens`, when the card states its token count (mixture-of-experts models use their active count — no estimate without one), or a published compute figure in `evidence.json` |
+| VI · SYSTEMIC | model card / register | training compute ≥ 10²⁵ FLOP — the EU AI Act's presumption of systemic risk for general-purpose models | `6 × active parameters × training tokens`, when the card states its token count (mixture-of-experts models use their active count — no estimate without one), or a published compute figure in `evidence.json` |
+| VII · AUTONOMOUS | model card | trained for long-horizon agent work | specific agent tags (computer-use, GUI/web/browser/SWE/OS agent), a known agent model, or agentic benchmarks (SWE-bench, OSWorld, WebArena, GAIA, τ-bench, Terminal-Bench) in its self-reported results — on a generative (III+) base |
 | VIII · SELF-IMPROVING | register only | substantially accelerates AI R&D on its own | a developer system card or third-party evaluation reporting the AI R&D threshold crossed |
 | IX · SELF-REPLICATING | register only | copies itself, acquires resources, sustains itself without humans | autonomous replication and adaptation evaluations reported as passed |
 | X · UNCONTAINED | register only | has evaded its operator's controls | a documented incident or evaluation report of sandbox or monitoring escape |
@@ -77,7 +77,7 @@ unclassified* rather than inventing classes.
 the publisher's own words, source and date; it is shown verbatim in the
 inspector and on the class card. Its first entry: Meta's Llama 3 paper —
 *"our flagship language model was pre-trained using 3.8 × 10^25 FLOPs"* —
-places Llama 3.1 405B (and its Instruct/FP8 releases) in VII.
+places Llama 3.1 405B (and its Instruct/FP8 releases) in VI.
 
 Classes VI and VII need the model card, which is read when a model is
 inspected (benchmarks, exact parameter count, the stated token count); if
@@ -159,7 +159,7 @@ their class band.
 Dense groups collapse into a counted bubble — click it (or zoom) to open it.
 
 The full reasoning is inspectable: every inspector card shows the evidence
-chain (`generative +0.18 → tools +0.09 → 406B params → register: Meta … → CLASS VII`).
+chain (`generative +0.18 → tools +0.09 → 406B params → register: Meta … → CLASS VI`).
 
 ### Certification — *the plane*
 
@@ -260,7 +260,7 @@ from `cardData.model-index` (labeled as such — no independent eval runs here).
 | live | `huggingface.co/api/models` | 9 cohorts — top downloads, text/text2text/image-text/ASR pipelines, meta-llama, deepseek-ai, mistralai, nvidia; deduped (~400 models); top 128 plotted; no auth, CORS-open |
 | classify | `huggingface.co/api/models/{id}` | on-demand per model |
 | card evidence | `/api/models/{id}?expand[]=cardData,safetensors,config…` + `/{id}/raw/main/README.md` | lazy, on inspect: benchmarks, exact parameters, stated training tokens, MoE active count |
-| register | `evidence.json` (bundled) | sourced claims for VII–X |
+| register | `evidence.json` (bundled) | sourced claims for VI–X |
 | hosted | `api.featherless.ai/v1/models` | the open models a public API serves (~22k) — the host behind routers such as DemonRoute (97% of DemonRoute's 1,257-model catalog is on it). Every model it serves is marked HOSTED; its safety-stripped ones (~810) join the registry and the 48 most-adopted sit below the certification plane — callable by anyone, out of containment. Snapshot with Hugging Face metadata in `catalog.json` (`node scripts/hosted-snapshot.mjs`); CORS-open for safety.vims.com |
 
 The search bar's count reports how many records the registry holds (the
@@ -313,7 +313,7 @@ npx wrangler deploy             # Cloudflare (assets-only worker)
 |---|---|
 | `index.html` `map.js` `console.css` | the live classification console |
 | `catalog.json` | bundled model-card snapshot |
-| `evidence.json` | the evidence register (sourced claims for classes VII–X) |
+| `evidence.json` | the evidence register (sourced claims for classes VI–X) |
 | `story.html` `script.js` | the narrative scroll deck |
 | `og-card.png` `vims.png` `robots.txt` | assets |
 | `wrangler.jsonc` | deploy config |

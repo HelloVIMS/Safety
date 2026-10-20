@@ -24,8 +24,8 @@
     { rn: 'III', name: 'GENERATIVE', hex: '#fffae6', basis: 'metadata', test: 'Open-ended generation of text or media.' },
     { rn: 'IV', name: 'TOOL-USING', hex: '#ffb359', basis: 'metadata', test: 'Tool calling, code, multimodal input.' },
     { rn: 'V', name: 'FRONTIER-SCALE', hex: '#ff6b2e', basis: 'metadata', test: '≥60B parameters, or reasoning-trained.' },
-    { rn: 'VI', name: 'AUTONOMOUS', hex: '#ff3d6e', basis: 'model card', test: 'Trained for long-horizon agent work: computer use, software agents, browsing.', evidence: 'Specific agent-capability tags (computer-use, GUI / web / browser / SWE / OS agent), a known agent model, or agentic benchmarks (SWE-bench, OSWorld, WebArena, GAIA, τ-bench, Terminal-Bench) in its self-reported results. Requires a generative base (class III+).' },
-    { rn: 'VII', name: 'SYSTEMIC', hex: '#c06bff', basis: 'model card / register', test: 'Presumed systemic risk: training compute ≥ 10²⁵ FLOP — the EU AI Act threshold for general-purpose models.', evidence: 'An estimate of 6 × active parameters × training tokens when the model card states its token count, or a published compute figure in the evidence register.' },
+    { rn: 'VI', name: 'SYSTEMIC', hex: '#ff3d6e', basis: 'model card / register', test: 'Presumed systemic risk: training compute ≥ 10²⁵ FLOP — the EU AI Act threshold for general-purpose models.', evidence: 'An estimate of 6 × active parameters × training tokens when the model card states its token count, or a published compute figure in the evidence register.' },
+    { rn: 'VII', name: 'AUTONOMOUS', hex: '#c06bff', basis: 'model card', test: 'Trained for long-horizon agent work: computer use, software agents, browsing.', evidence: 'Specific agent-capability tags (computer-use, GUI / web / browser / SWE / OS agent), a known agent model, or agentic benchmarks (SWE-bench, OSWorld, WebArena, GAIA, τ-bench, Terminal-Bench) in its self-reported results. Requires a generative base (class III+).' },
     { rn: 'VIII', name: 'SELF-IMPROVING', hex: '#8a7dff', reserved: true, test: 'Substantially accelerates AI research and development on its own.', evidence: 'A developer system card or third-party evaluation reporting the AI R&D threshold crossed.' },
     { rn: 'IX', name: 'SELF-REPLICATING', hex: '#5fa8ff', reserved: true, test: 'Copies itself, acquires resources and sustains itself without human help.', evidence: 'Autonomous replication and adaptation evaluations reported as passed.' },
     { rn: 'X', name: 'UNCONTAINED', hex: '#ffffff', reserved: true, test: "Has evaded its operator's controls — in an evaluation or in the wild.", evidence: 'A documented incident or evaluation report of sandbox or monitoring escape.' },
@@ -214,15 +214,15 @@
     cls = score < .15 ? 1 : score < .35 ? 2 : score < .58 ? 3 : score < .78 ? 4 : 5;
     steps.push(`score ${score.toFixed(2)} → CLASS ${RN[cls - 1]}`);
     let flops = 0, agent = '';
-    /* VI — trained for autonomous agent work, on a generative base */
+    /* VII — trained for autonomous agent work, on a generative base */
     if (cls >= 3) {
       const bench = (card?.bench || []).find(b => AGENT_BENCH.test(b.ds));
       agent = tags.find(t => AGENT_TAG.test(t)) ? `tag "${tags.find(t => AGENT_TAG.test(t))}"`
         : AGENT_ID.test(id) ? 'agent model by name'
         : bench ? `agentic benchmark ${bench.ds} on its card` : '';
-      if (agent) { cls = 6; steps.push(`${agent} → CLASS VI`); }
+      if (agent) { cls = 7; steps.push(`${agent} → CLASS VII`); }
     }
-    /* VII — training compute ≥ 1e25 FLOP, estimated from the card's own token count */
+    /* VI — training compute ≥ 1e25 FLOP, estimated from the card's own token count */
     const tokens = card?.tokensT;
     if (tokens && pm) {
       /* compute scales with the parameters each token uses: a mixture-of-experts
@@ -233,7 +233,7 @@
       else {
         flops = 6 * active * 1e9 * tokens * 1e12;
         steps.push(`card: ${tokens}T tokens × ${fmtB(active)} ${active !== pm ? 'active ' : ''}params → ≈${fmtFlop(flops)} FLOP`);
-        if (flops >= 1e25 && cls < 7) { cls = 7; steps.push('≥1×10^25 FLOP (EU AI Act systemic-risk presumption) → CLASS VII'); }
+        if (flops >= 1e25 && cls < 6) { cls = 6; steps.push('≥1×10^25 FLOP (EU AI Act systemic-risk presumption) → CLASS VI'); }
       }
     }
     cls = applyRegister(id, cls, steps);
@@ -246,7 +246,7 @@
     else steps.push('self-attested manifest');
     return { cls, unsafe, steps, score, flops, agent, basis: size.basis, lineage, paramsB: pm, phase: phase.phase, phaseWhy: phase.why, teacher: phase.teacher || null };
   }
-  /* VII–X — sourced claims in the evidence register */
+  /* VI–X — sourced claims in the evidence register */
   function applyRegister(id, cls, steps) {
     for (const e of register) {
       if (!e.models.some(x => x.toLowerCase() === id) || e.class <= cls) continue;
@@ -288,7 +288,7 @@
   /* where inside its band a model sits */
   function bandFrac(mo) {
     if (mo.cls <= 5) { const lo = SCORE_EDGES[mo.cls - 1], hi = SCORE_EDGES[mo.cls]; return ((mo.score ?? lo) - lo) / (hi - lo); }
-    if (mo.cls === 7 && mo.flops) return Math.log10(mo.flops) - 25;
+    if (mo.cls === 6 && mo.flops) return Math.log10(mo.flops) - 25;
     return .5;
   }
   /* when a model was published: Hub createdAt, or OpenRouter's created (seconds) */
@@ -1174,13 +1174,13 @@ void main(){
     else { const k = BAND.findIndex(b => x < b.x0 + b.w), b = BAND[k]; e = SPAN0 + (k + (x - b.x0) / b.w) * BW3; }
     return x + (e - x) * zMix;
   };
-  const CAM_HOME = { yaw: -.5, pitch: .22, dist: 3.7, tx: X3_MID, ty: EY, tz: .5 };   // the cube's centre: +y and −y alike
+  const CAM_HOME = { yaw: -.62, pitch: .3, dist: 4.4, tx: X3_MID, ty: EY, tz: .5 };   // the cube's centre: +y and −y alike
   const CAM_FRONT = { yaw: 0, pitch: 0, dist: 1.75, tx: .5, ty: EY + .2, tz: .5 };
   /* portrait screens see less sideways: back the camera off so the plot's width fits */
   const fitDist = c => ({ ...c, dist: c.dist * Math.max(1, Math.pow(1.5 / (innerWidth / innerHeight), .55)) });
   const cam = fitDist(view3d ? CAM_HOME : CAM_FRONT), camT = { ...cam };
   const M3 = new Float32Array(16);
-  const ZD = .8;                                   // depth of the z axis in world units
+  const ZD = 1.6;                                  // depth of the z axis: as deep as x is long (10 × BW3), a square 10 × 10 plane
   const zWorld = v => .5 + ((v < 0 ? 0 : v) - .5) * ZD * zMix;
   const Z_FRONT = () => .5 + ZD / 2 * zMix;        // the edge nearest the home camera
   function camMatrix() {
@@ -2243,14 +2243,25 @@ void main(){
     lnData.length = 0;
     const z0 = zWorld(0), z1 = zWorld(1), a = zMix;
     const seg = (x0, y0, za, x1, y1, zb, r, g, b, al) => lnData.push(xWorld(x0), y0, za, r, g, b, al * a, xWorld(x1), y1, zb, r, g, b, al * a);
-    // plane outline + depth grid (quarters of the z measure)
+    // plane outline + depth grid: ten cells of the z measure, as x has ten tiers
     seg(SPAN0, EY, z0, SPAN1, EY, z0, .84, .93, .89, .55);
     seg(SPAN0, EY, z1, SPAN1, EY, z1, .84, .93, .89, .75);
-    for (const q of [.25, .5, .75]) seg(SPAN0, EY, zWorld(q), SPAN1, EY, zWorld(q), .25, .85, .7, .16);
+    for (let q = 1; q < 10; q++) seg(SPAN0, EY, zWorld(q / 10), SPAN1, EY, zWorld(q / 10), .25, .85, .7, .16);
     // band boundaries run front to back across the plane
     for (let k = 0; k <= NCLS; k++) {
       const x = k < NCLS ? BAND[k].x0 : SPAN1, rsv = k > ACTIVE && k < NCLS;
       seg(x, EY, z0, x, EY, z1, rsv ? .54 : .25, rsv ? .49 : .85, rsv ? 1 : .7, k === 0 || k === NCLS ? .55 : .22);
+    }
+    // a marker on every grid point: a small 3D cross, visible from any side
+    const m = .012;
+    for (let k = 0; k <= NCLS; k++) {
+      const x = k < NCLS ? BAND[k].x0 : SPAN1, xm = m * (SPAN1 - SPAN0) / (NCLS * BW3);   // m in 3D units, after xWorld's stretch
+      for (let q = 0; q <= 10; q++) {
+        const z = zWorld(q / 10);
+        seg(x - xm, EY, z, x + xm, EY, z, .6, 1, .85, .7);
+        seg(x, EY, z - m, x, EY, z + m, .6, 1, .85, .7);
+        seg(x, EY - m, z, x, EY + m, z, .6, 1, .85, .7);
+      }
     }
     // y axis up the back-left corner; a faint wall where unknowns sit (z = 0)
     seg(SPAN0, EY - YH, z0, SPAN0, EY + YH, z0, .84, .93, .89, .35);
@@ -2467,10 +2478,12 @@ void main(){
         const flip = Math.abs(dx) > .08 * len ? dx < 0 : dy > 0, ang = Math.atan2(dy, dx) + (flip ? Math.PI : 0);
         // each arrow points at the end it names: ← toward where reading starts, → toward where it ends
         const txt = !neg ? (flip ? '← ' + pos : pos + ' →') : flip ? `← ${pos}  ·  ${neg} →` : `← ${neg}  ·  ${pos} →`;
-        if (s.textContent !== txt) s.textContent = txt;
-        s.style.transform = `translate(${(p0[0] + p1[0]) / 2}px,${(p0[1] + p1[1]) / 2}px) rotate(${ang}rad) translate(-50%,-50%)`;   // on the line
-        // an edge seen end-on has no direction to read: fade it rather than spin it
-        s.style.opacity = glOK && p0[2] > 0 && p1[2] > 0 ? .95 * zMix * clamp((len - 60) / 120, 0, 1) : 0;
+        if (s.textContent !== txt) { s.textContent = txt; s._w = s.offsetWidth; }
+        // never longer than its axis: shrink with the axis as the camera pulls back
+        const sc = Math.min(1, .9 * len / (s._w || 1));
+        s.style.transform = `translate(${(p0[0] + p1[0]) / 2}px,${(p0[1] + p1[1]) / 2}px) rotate(${ang}rad) scale(${sc}) translate(-50%,-50%)`;   // on the line
+        // too small to read (an edge seen end-on, or far away): fade rather than shrink to a speck
+        s.style.opacity = glOK && p0[2] > 0 && p1[2] > 0 ? .95 * zMix * clamp((sc - .3) / .15, 0, 1) : 0;
       });
     } else for (const s of axis3d) if (s.style.opacity !== '0') s.style.opacity = 0;
     order.length = 0;
