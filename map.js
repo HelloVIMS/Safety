@@ -2072,10 +2072,11 @@ void main(){
   let yAxis = Y_AXES[new URLSearchParams(location.search).get('y')] ? new URLSearchParams(location.search).get('y') : 'adoption';
   const apiStrip = () => yAxis !== 'released';
   const ranker = vals => { const s = vals.filter(v => v > 0).sort((p, q) => p - q); return v => !v || s.length < 2 ? .5 : s.findIndex(x => x >= v) / (s.length - 1); };
-  /* 10M → 0 … 10T → 1: six decades over ten cells, so today's largest (~1T)
-     sit in the ninth and the tenth is left for models still to come */
-  const logSize = b => b > 0 ? clamp((Math.log10(b) + 2) / 6, 0, 1) : -1;
-  const sizeAt = f => 10 ** (6 * f - 2);
+  /* 10M → 0 … 100T → 1: seven decades over ten cells, so today's largest
+     (~1T) sit in the eighth and the top two are left for decades of growth */
+  const SIZE_DECADES = 7;
+  const logSize = b => b > 0 ? clamp((Math.log10(b) + 2) / SIZE_DECADES, 0, 1) : -1;
+  const sizeAt = f => 10 ** (SIZE_DECADES * f - 2);
   const fmtSize = b => b >= 1000 ? +(b / 1000).toPrecision(2) + 'T' : b >= 1 ? +b.toPrecision(2) + 'B' : +(b * 1000).toPrecision(2) + 'M';
   /* the inverse of ranker: the value at a rank fraction, for axis ticks */
   const quantiler = vals => { const s = vals.filter(v => v > 0).sort((p, q) => p - q); return f => s.length ? s[Math.round(clamp(f, 0, 1) * (s.length - 1))] : 0; };
