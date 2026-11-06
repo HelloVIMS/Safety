@@ -35,6 +35,7 @@
         <span class="st-reg"><b id="st-reg">0</b> REGISTERED</span>
         <button type="button" class="card-btn" data-card="legend" aria-controls="legend" aria-pressed="true">RISK CLASS</button>
         <button type="button" class="card-btn" data-card="roster" aria-controls="roster-card" aria-pressed="true">MODELS</button>
+        <button type="button" class="ai-btn" id="ai-btn" title="AI assistant" aria-label="Open AI assistant" aria-pressed="false" aria-controls="ai-panel"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg></button>
         <button class="fs-btn" id="fs-btn" title="fullscreen (F)" aria-label="toggle fullscreen">⛶</button>
       </div>
     </div>
@@ -99,7 +100,10 @@
     </nav>
   </div>
 
+  <aside class="ai-panel" id="ai-panel" aria-label="Safety assistant" hidden></aside>
+
   <script src="map.js?v=24"></script>
+  <script src="assistant.js?v=1"></script>
   <script>
     // The VIMS app selector — the same one every VIMS app opens (web-nav
     // ServiceSwitcher, bundled by vims.com), loaded on first use.
